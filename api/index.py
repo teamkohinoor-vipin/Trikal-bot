@@ -14,7 +14,8 @@ if not BOT_TOKEN:
     raise Exception("BOT_TOKEN environment variable not set")
 
 bot = Bot(token=BOT_TOKEN)
-dispatcher = Dispatcher(bot, None, workers=0)
+# Create dispatcher with 1 worker thread to avoid async warning
+dispatcher = Dispatcher(bot, None, workers=1)
 
 # Register all handlers from bot.py
 dispatcher.add_handler(CommandHandler("start", start))
@@ -31,7 +32,8 @@ dispatcher.add_handler(CommandHandler("protect", protect_command))
 dispatcher.add_handler(CommandHandler("unprotect", unprotect_command))
 dispatcher.add_handler(CommandHandler("protected", protected_command))
 dispatcher.add_handler(CallbackQueryHandler(button_handler))
-dispatcher.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+# Use lowercase filters: text and command (not TEXT, COMMAND)
+dispatcher.add_handler(MessageHandler(filters.text & ~filters.command, handle_message))
 
 @app.route("/", methods=["POST"])
 def webhook():
