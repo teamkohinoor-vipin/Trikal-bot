@@ -3,14 +3,13 @@ import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from flask import Flask, request
-from telegram import Update, Bot, ParseMode          # ✅ Correct import
+from telegram import Update, Bot, ParseMode
 from telegram.ext import Dispatcher, CommandHandler, CallbackQueryHandler, MessageHandler, filters
 from bot import *
 from config import BOT_TOKEN
 
 app = Flask(__name__)
 
-# Check token early
 if not BOT_TOKEN:
     raise Exception("BOT_TOKEN environment variable not set")
 
