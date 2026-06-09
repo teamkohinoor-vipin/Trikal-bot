@@ -3,7 +3,10 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # ---------- Telegram ----------
-BOT_TOKEN = os.getenv("BOT_TOKEN", "your_bot_token_here")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "")
+if not BOT_TOKEN:
+    print("⚠️ WARNING: BOT_TOKEN is not set. The bot will not work until set.")
+
 ADMIN_IDS = [int(id) for id in os.getenv("ADMIN_IDS", "").split(",") if id]
 SUPPORT_USERNAME = os.getenv("SUPPORT_USERNAME", "KHRsupportBot")
 REFERRAL_NOTIFICATION_GROUP = os.getenv("REFERRAL_NOTIFICATION_GROUP", "https://t.me/+tIwH7ctrekc1YThl")
