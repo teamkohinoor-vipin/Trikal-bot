@@ -4,7 +4,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from flask import Flask, request
 from telegram import Update, Bot, ParseMode
-from telegram.ext import Dispatcher, CommandHandler, CallbackQueryHandler, MessageHandler, filters
+from telegram.ext import Dispatcher, CommandHandler, CallbackQueryHandler, MessageHandler, Filters
 from bot import *
 from config import BOT_TOKEN
 
@@ -14,10 +14,9 @@ if not BOT_TOKEN:
     raise Exception("BOT_TOKEN environment variable not set")
 
 bot = Bot(token=BOT_TOKEN)
-# Create dispatcher with 1 worker thread to avoid async warning
 dispatcher = Dispatcher(bot, None, workers=1)
 
-# Register all handlers from bot.py
+# Register all handlers
 dispatcher.add_handler(CommandHandler("start", start))
 dispatcher.add_handler(CommandHandler("help", help_command))
 dispatcher.add_handler(CommandHandler("phone", phone_command))
@@ -32,8 +31,8 @@ dispatcher.add_handler(CommandHandler("protect", protect_command))
 dispatcher.add_handler(CommandHandler("unprotect", unprotect_command))
 dispatcher.add_handler(CommandHandler("protected", protected_command))
 dispatcher.add_handler(CallbackQueryHandler(button_handler))
-# Use lowercase filters: text and command (not TEXT, COMMAND)
-dispatcher.add_handler(MessageHandler(filters.text & ~filters.command, handle_message))
+# Use Filters (capital F) for PTB v13
+dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_message))
 
 @app.route("/", methods=["POST"])
 def webhook():
@@ -45,6 +44,5 @@ def webhook():
         print(f"Webhook error: {e}")
         return "ERROR", 500
 
-# For local testing
 if __name__ == "__main__":
     app.run(port=5000)
