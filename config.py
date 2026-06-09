@@ -5,7 +5,7 @@ load_dotenv()
 # ---------- Telegram ----------
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 if not BOT_TOKEN:
-    print("⚠️ WARNING: BOT_TOKEN is not set. The bot will not work until set.")
+    print("⚠️ WARNING: BOT_TOKEN not set. Bot will not work.")
 
 ADMIN_IDS = [int(id) for id in os.getenv("ADMIN_IDS", "").split(",") if id]
 SUPPORT_USERNAME = os.getenv("SUPPORT_USERNAME", "KHRsupportBot")
@@ -41,6 +41,5 @@ REFERRAL_TIER_2_COUNT = 70
 DEFAULT_DAILY_LIMIT = 3
 DEFAULT_AUTO_DELETE_TIME = 60
 
-# Fallback admin if not set
 if not ADMIN_IDS:
     ADMIN_IDS = [8262107211]
