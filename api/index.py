@@ -31,7 +31,6 @@ dispatcher.add_handler(CommandHandler("protect", protect_command))
 dispatcher.add_handler(CommandHandler("unprotect", unprotect_command))
 dispatcher.add_handler(CommandHandler("protected", protected_command))
 dispatcher.add_handler(CallbackQueryHandler(button_handler))
-# Use Filters (capital F) for PTB v13
 dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_message))
 
 @app.route("/", methods=["POST"])
@@ -45,4 +44,4 @@ def webhook():
         return "ERROR", 500
 
 if __name__ == "__main__":
-    app.run(port=5000)
+    app.run(host="0.0.0.0", port=5000)
