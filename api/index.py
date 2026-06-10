@@ -2,7 +2,7 @@ import sys, os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from flask import Flask, request
 from telegram import Update, Bot, ParseMode
-from telegram.ext import Dispatcher, CommandHandler
+from telegram.ext import Dispatcher, CommandHandler, run_async
 import json
 
 app = Flask(__name__)
@@ -14,6 +14,7 @@ if not BOT_TOKEN:
 bot = Bot(token=BOT_TOKEN)
 dispatcher = Dispatcher(bot, None, workers=1)
 
+@run_async
 async def start(update, context):
     print("✅ start handler called")
     try:
@@ -24,13 +25,13 @@ async def start(update, context):
     except Exception as e:
         print(f"❌ Error in start: {e}")
 
-dispatcher.add_handler(CommandHandler("start", start, run_async=True))
+dispatcher.add_handler(CommandHandler("start", start))
 
 @app.route("/", methods=["POST"])
 def webhook():
     try:
         data = request.get_json(force=True)
-        print("📨 Received update:", json.dumps(data, indent=2)[:500])
+        print("📨 Full update:", json.dumps(data, indent=2))  # Print everything
         update = Update.de_json(data, bot)
         dispatcher.process_update(update)
         return "OK", 200
