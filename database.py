@@ -1,26 +1,41 @@
-from pymongo import MongoClient
+import time
+import secrets
 from datetime import datetime, timedelta
+from pymongo import MongoClient
 from config import MONGO_URI, DB_NAME, INITIAL_CREDITS, REFERRAL_CREDITS, NEW_USER_REFERRAL_CREDITS, REFERRAL_PREMIUM_DAYS, REDEEM_COOLDOWN_SECONDS
 
 client = MongoClient(MONGO_URI)
 db = client[DB_NAME]
 
+# Collections
 users = db["users"]
 redeem_codes = db["redeem_codes"]
 banned_users = db["banned_users"]
 admins = db["admins"]
 protected_numbers = db["protected_numbers"]
-protected_aadhaar = db["protected_aadhaar"]
 free_mode = db["free_mode"]
+global_free_mode = db["global_free_mode"]
+daily_limit = db["daily_limit"]
+auto_delete_time = db["auto_delete_time"]
+maintenance_mode = db["maintenance_mode"]
 user_history = db["user_history"]
-premium_features = db["premium_features"]
-premium_users = db["premium_users"]   # old style
 
+# Initialise config documents
 def init_config():
     if free_mode.count_documents({}) == 0:
         free_mode.insert_one({"active": False})
+    if global_free_mode.count_documents({}) == 0:
+        global_free_mode.insert_one({"active": False})
+    if daily_limit.count_documents({}) == 0:
+        daily_limit.insert_one({"limit": 3})
+    if auto_delete_time.count_documents({}) == 0:
+        auto_delete_time.insert_one({"seconds": 60})
+    if maintenance_mode.count_documents({}) == 0:
+        maintenance_mode.insert_one({"active": False})
+
 init_config()
 
+# ---------- User functions ----------
 def get_user(user_id):
     return users.find_one({"_id": user_id})
 
@@ -33,6 +48,8 @@ def create_user(user_id, referred_by=None):
         "credits": initial,
         "referred_by": referred_by,
         "referral_count": 0,
+        "daily_searches": 0,
+        "last_search_date": datetime.now().strftime("%Y-%m-%d"),
         "redeemed_codes": [],
         "last_redeem_timestamp": 0,
         "premium_until": None
@@ -61,6 +78,25 @@ def set_premium_until(user_id, days=None):
 def remove_premium(user_id):
     users.update_one({"_id": user_id}, {"$set": {"premium_until": None}})
 
+def get_daily_data(user_id):
+    user = get_user(user_id)
+    if not user:
+        return 0, datetime.now().strftime("%Y-%m-%d")
+    today = datetime.now().strftime("%Y-%m-%d")
+    last = user.get("last_search_date", "")
+    if last != today:
+        users.update_one({"_id": user_id}, {"$set": {"daily_searches": 0, "last_search_date": today}})
+        return 0, today
+    return user.get("daily_searches", 0), today
+
+def increment_daily_searches(user_id):
+    today = datetime.now().strftime("%Y-%m-%d")
+    user = get_user(user_id)
+    if not user or user.get("last_search_date") != today:
+        users.update_one({"_id": user_id}, {"$set": {"daily_searches": 1, "last_search_date": today}})
+    else:
+        users.update_one({"_id": user_id}, {"$inc": {"daily_searches": 1}})
+
 def log_user_action(user_id, action, details):
     user_history.insert_one({
         "user_id": user_id,
@@ -69,6 +105,7 @@ def log_user_action(user_id, action, details):
         "details": details
     })
 
+# ---------- Admin & settings ----------
 def is_admin(user_id):
     from config import ADMIN_IDS
     if user_id in ADMIN_IDS:
@@ -102,6 +139,33 @@ def set_free_mode(active):
 def is_free_mode_active():
     return free_mode.find_one().get("active", False)
 
+def set_global_free_mode(active):
+    global_free_mode.update_one({}, {"$set": {"active": active}})
+
+def is_global_free_mode_active():
+    return global_free_mode.find_one().get("active", False)
+
+def set_maintenance_mode(active):
+    maintenance_mode.update_one({}, {"$set": {"active": active}})
+
+def is_maintenance_mode_active():
+    return maintenance_mode.find_one().get("active", False)
+
+def get_daily_free_limit():
+    doc = daily_limit.find_one()
+    return doc.get("limit", 3) if doc else 3
+
+def set_daily_free_limit(limit):
+    daily_limit.update_one({}, {"$set": {"limit": limit}})
+
+def get_auto_delete_time():
+    doc = auto_delete_time.find_one()
+    return doc.get("seconds", 60) if doc else 60
+
+def set_auto_delete_time(seconds):
+    auto_delete_time.update_one({}, {"$set": {"seconds": seconds}})
+
+# ---------- Number protection (phone only) ----------
 def is_number_protected(number):
     return protected_numbers.find_one({"_id": number}) is not None
 
@@ -123,29 +187,8 @@ def unprotect_number(number):
 def get_all_protected_numbers():
     return list(protected_numbers.find())
 
-def is_aadhaar_protected(aadhaar):
-    return protected_aadhaar.find_one({"_id": aadhaar}) is not None
-
-def protect_aadhaar(aadhaar, admin_id, message=None):
-    if is_aadhaar_protected(aadhaar):
-        return False
-    protected_aadhaar.insert_one({
-        "_id": aadhaar,
-        "protected_by": admin_id,
-        "protected_at": datetime.now(),
-        "message": message or "❌ No data found for this Aadhaar."
-    })
-    return True
-
-def unprotect_aadhaar(aadhaar):
-    result = protected_aadhaar.delete_one({"_id": aadhaar})
-    return result.deleted_count > 0
-
-def get_all_protected_aadhaar():
-    return list(protected_aadhaar.find())
-
+# ---------- Redeem codes ----------
 def generate_redeem_code(credits, uses, created_by):
-    import secrets
     code = secrets.token_hex(4).upper()
     redeem_codes.insert_one({
         "_id": code,
@@ -163,7 +206,6 @@ def use_redeem_code(code, user_id):
     user = get_user(user_id)
     if code in user.get("redeemed_codes", []):
         return None
-    import time
     last_ts = user.get("last_redeem_timestamp", 0)
     if time.time() - last_ts < REDEEM_COOLDOWN_SECONDS:
         return None
