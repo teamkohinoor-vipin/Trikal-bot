@@ -1,5 +1,6 @@
 import re
 import html
+import json
 import requests
 import logging
 from io import BytesIO
@@ -44,21 +45,39 @@ def create_search_result_file(result_text, query, search_type, bot_username):
     return f
 
 def fetch_phone_info(phone_number):
-    """Universal API parser – works with your new API and others."""
+    """Universal API parser – strips trailing comments and handles standard APIs."""
     url = PHONE_API_NEW.format(num=phone_number)
     try:
         resp = requests.get(url, timeout=15)
         if resp.status_code != 200:
             logger.warning(f"API returned {resp.status_code}")
             return None
-        data = resp.json()
-        logger.info(f"Raw API response: {str(data)[:500]}")
 
-        # Special handling for APIs that return success status and records inside data.records
+        # Remove any trailing non‑JSON content (e.g. // Developer...)
+        raw_text = resp.text
+        # Find the first '{' and the last balanced '}'
+        start = raw_text.find('{')
+        if start == -1:
+            return None
+        depth = 0
+        end = start
+        for i, ch in enumerate(raw_text[start:], start):
+            if ch == '{':
+                depth += 1
+            elif ch == '}':
+                depth -= 1
+                if depth == 0:
+                    end = i + 1
+                    break
+        if end <= start:
+            return None
+        json_text = raw_text[start:end]
+        data = json.loads(json_text)
+
+        # Special handling for your new API (status: success, data.records)
         if isinstance(data, dict) and data.get('status') == 'success' and 'data' in data:
             records = data['data'].get('records')
             if isinstance(records, list) and records:
-                # Directly use the records list (normalize field names)
                 normalized = []
                 field_map = {
                     'name': ['name', 'full_name', 'customer_name', 'person_name'],
@@ -77,7 +96,7 @@ def fetch_phone_info(phone_number):
                             if k in rec and rec[k]:
                                 new[target] = str(rec[k])
                                 break
-                    # Keep any additional fields (except those already mapped)
+                    # copy any additional fields
                     for k, v in rec.items():
                         if k not in field_map and v:
                             new[k] = v
@@ -85,7 +104,7 @@ def fetch_phone_info(phone_number):
                         normalized.append(new)
                 return normalized if normalized else None
 
-        # Fallback: generic recursive extraction (works for any structure)
+        # Fallback generic recursive extraction for other APIs
         def extract_records(obj, depth=0):
             if depth > 5:
                 return None
@@ -134,6 +153,9 @@ def fetch_phone_info(phone_number):
             if new:
                 normalized.append(new)
         return normalized
+    except json.JSONDecodeError as e:
+        logger.error(f"JSON decode error: {e}")
+        return None
     except Exception as e:
         logger.error(f"API error: {e}")
         return None
