@@ -43,8 +43,8 @@ def create_search_result_file(result_text, query, search_type, bot_username):
     f.name = create_safe_filename(query, search_type, bot_username)
     return f
 
-def fetch_phone_info(phone_number):   # <-- removed 'async'
-    """Universal API parser – works with any response structure."""
+def fetch_phone_info(phone_number):
+    """Universal API parser – works with your new API and others."""
     url = PHONE_API_NEW.format(num=phone_number)
     try:
         resp = requests.get(url, timeout=15)
@@ -54,6 +54,38 @@ def fetch_phone_info(phone_number):   # <-- removed 'async'
         data = resp.json()
         logger.info(f"Raw API response: {str(data)[:500]}")
 
+        # Special handling for APIs that return success status and records inside data.records
+        if isinstance(data, dict) and data.get('status') == 'success' and 'data' in data:
+            records = data['data'].get('records')
+            if isinstance(records, list) and records:
+                # Directly use the records list (normalize field names)
+                normalized = []
+                field_map = {
+                    'name': ['name', 'full_name', 'customer_name', 'person_name'],
+                    'father_name': ['fname', 'father_name', 'father', 'f_name'],
+                    'address': ['address', 'addr', 'location', 'street'],
+                    'mobile': ['mobile', 'phone', 'number', 'contact', 'mobileno'],
+                    'alt_mobile': ['alt', 'alt_mobile', 'alternate', 'phone2'],
+                    'circle': ['circle', 'operator', 'provider', 'network'],
+                    'id_number': ['id', 'id_number', 'aadhar', 'uid', 'vid'],
+                    'email': ['email', 'mail', 'e_mail']
+                }
+                for rec in records:
+                    new = {}
+                    for target, keys in field_map.items():
+                        for k in keys:
+                            if k in rec and rec[k]:
+                                new[target] = str(rec[k])
+                                break
+                    # Keep any additional fields (except those already mapped)
+                    for k, v in rec.items():
+                        if k not in field_map and v:
+                            new[k] = v
+                    if new:
+                        normalized.append(new)
+                return normalized if normalized else None
+
+        # Fallback: generic recursive extraction (works for any structure)
         def extract_records(obj, depth=0):
             if depth > 5:
                 return None
