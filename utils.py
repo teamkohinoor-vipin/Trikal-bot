@@ -49,7 +49,7 @@ def fetch_phone_info(phone_number):
     """Fetches and normalizes phone info from any API, removing unwanted fields."""
     url = PHONE_API_NEW.format(num=phone_number)
     try:
-        resp = requests.get(url, timeout=15)
+        resp = requests.get(url, timeout=30)
         if resp.status_code != 200:
             logger.warning(f"API returned {resp.status_code}")
             return None
