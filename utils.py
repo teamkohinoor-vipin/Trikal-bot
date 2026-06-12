@@ -43,7 +43,7 @@ def create_search_result_file(result_text, query, search_type, bot_username):
     f.name = create_safe_filename(query, search_type, bot_username)
     return f
 
-async def fetch_phone_info(phone_number):
+def fetch_phone_info(phone_number):   # <-- removed 'async'
     """Universal API parser – works with any response structure."""
     url = PHONE_API_NEW.format(num=phone_number)
     try:
