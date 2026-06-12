@@ -24,6 +24,7 @@ def normalize_phone_number(text):
 def format_address(address):
     if not address or address == 'N/A':
         return 'N/A'
+    # Remove duplicate words and clean spacing
     address = re.sub(r'\s+', ' ', address.strip())
     words = address.split()
     unique = []
@@ -45,7 +46,7 @@ def create_search_result_file(result_text, query, search_type, bot_username):
     return f
 
 def fetch_phone_info(phone_number):
-    """Universal API parser – strips trailing comments and handles standard APIs."""
+    """Fetches and normalizes phone info from any API, removing unwanted fields."""
     url = PHONE_API_NEW.format(num=phone_number)
     try:
         resp = requests.get(url, timeout=15)
@@ -53,9 +54,8 @@ def fetch_phone_info(phone_number):
             logger.warning(f"API returned {resp.status_code}")
             return None
 
-        # Remove any trailing non‑JSON content (e.g. // Developer...)
+        # Remove trailing comments (like // Developer...)
         raw_text = resp.text
-        # Find the first '{' and the last balanced '}'
         start = raw_text.find('{')
         if start == -1:
             return None
@@ -74,72 +74,47 @@ def fetch_phone_info(phone_number):
         json_text = raw_text[start:end]
         data = json.loads(json_text)
 
-        # Special handling for your new API (status: success, data.records)
+        # Extract records – handles both "records" array and other structures
+        records = None
         if isinstance(data, dict) and data.get('status') == 'success' and 'data' in data:
             records = data['data'].get('records')
-            if isinstance(records, list) and records:
-                normalized = []
-                field_map = {
-                    'name': ['name', 'full_name', 'customer_name', 'person_name'],
-                    'father_name': ['fname', 'father_name', 'father', 'f_name'],
-                    'address': ['address', 'addr', 'location', 'street'],
-                    'mobile': ['mobile', 'phone', 'number', 'contact', 'mobileno'],
-                    'alt_mobile': ['alt', 'alt_mobile', 'alternate', 'phone2'],
-                    'circle': ['circle', 'operator', 'provider', 'network'],
-                    'id_number': ['id', 'id_number', 'aadhar', 'uid', 'vid'],
-                    'email': ['email', 'mail', 'e_mail']
-                }
-                for rec in records:
-                    new = {}
-                    for target, keys in field_map.items():
-                        for k in keys:
-                            if k in rec and rec[k]:
-                                new[target] = str(rec[k])
-                                break
-                    # copy any additional fields
-                    for k, v in rec.items():
-                        if k not in field_map and v:
-                            new[k] = v
-                    if new:
-                        normalized.append(new)
-                return normalized if normalized else None
-
-        # Fallback generic recursive extraction for other APIs
-        def extract_records(obj, depth=0):
-            if depth > 5:
+        else:
+            # Generic recursive extraction (fallback)
+            def extract_records(obj, depth=0):
+                if depth > 5:
+                    return None
+                if isinstance(obj, dict):
+                    if any(k in obj for k in ('name', 'mobile', 'address', 'fname')):
+                        return [obj]
+                    for v in obj.values():
+                        res = extract_records(v, depth+1)
+                        if res:
+                            return res
+                elif isinstance(obj, list):
+                    if obj and isinstance(obj[0], dict):
+                        if any(k in obj[0] for k in ('name', 'mobile', 'address', 'fname')):
+                            return obj
+                    for item in obj:
+                        res = extract_records(item, depth+1)
+                        if res:
+                            return res
                 return None
-            if isinstance(obj, dict):
-                if any(k in obj for k in ('name', 'mobile', 'address', 'fname', 'phone')):
-                    return [obj]
-                for v in obj.values():
-                    res = extract_records(v, depth+1)
-                    if res:
-                        return res
-            elif isinstance(obj, list):
-                if obj and isinstance(obj[0], dict):
-                    if any(k in obj[0] for k in ('name', 'mobile', 'address', 'fname')):
-                        return obj
-                for item in obj:
-                    res = extract_records(item, depth+1)
-                    if res:
-                        return res
-            return None
+            records = extract_records(data)
 
-        records = extract_records(data)
         if not records:
             return None
 
-        normalized = []
+        # Define allowed fields (only these will appear in the final output)
         field_map = {
             'name': ['name', 'full_name', 'customer_name', 'person_name'],
             'father_name': ['fname', 'father_name', 'father', 'f_name'],
             'address': ['address', 'addr', 'location', 'street'],
             'mobile': ['mobile', 'phone', 'number', 'contact', 'mobileno'],
-            'alt_mobile': ['alt', 'alt_mobile', 'alternate', 'phone2'],
             'circle': ['circle', 'operator', 'provider', 'network'],
-            'id_number': ['id', 'id_number', 'aadhar', 'uid', 'vid'],
-            'email': ['email', 'mail', 'e_mail']
+            'id_number': ['id', 'id_number', 'aadhar', 'uid', 'vid']
         }
+        # Do NOT include any extra fields (e.g., credited, developer, channel)
+        normalized = []
         for rec in records:
             new = {}
             for target, keys in field_map.items():
@@ -147,9 +122,7 @@ def fetch_phone_info(phone_number):
                     if k in rec and rec[k]:
                         new[target] = str(rec[k])
                         break
-            for k, v in rec.items():
-                if k not in field_map and v:
-                    new[k] = v
+            # Skip any field not in field_map
             if new:
                 normalized.append(new)
         return normalized
