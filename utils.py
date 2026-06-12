@@ -24,7 +24,6 @@ def normalize_phone_number(text):
 def format_address(address):
     if not address or address == 'N/A':
         return 'N/A'
-    # Remove duplicate words and clean spacing
     address = re.sub(r'\s+', ' ', address.strip())
     words = address.split()
     unique = []
@@ -46,7 +45,6 @@ def create_search_result_file(result_text, query, search_type, bot_username):
     return f
 
 def fetch_phone_info(phone_number):
-    """Fetches and normalizes phone info from any API, removing unwanted fields."""
     url = PHONE_API_NEW.format(num=phone_number)
     try:
         resp = requests.get(url, timeout=30)
@@ -54,7 +52,6 @@ def fetch_phone_info(phone_number):
             logger.warning(f"API returned {resp.status_code}")
             return None
 
-        # Remove trailing comments (like // Developer...)
         raw_text = resp.text
         start = raw_text.find('{')
         if start == -1:
@@ -74,12 +71,10 @@ def fetch_phone_info(phone_number):
         json_text = raw_text[start:end]
         data = json.loads(json_text)
 
-        # Extract records – handles both "records" array and other structures
         records = None
         if isinstance(data, dict) and data.get('status') == 'success' and 'data' in data:
             records = data['data'].get('records')
         else:
-            # Generic recursive extraction (fallback)
             def extract_records(obj, depth=0):
                 if depth > 5:
                     return None
@@ -104,7 +99,6 @@ def fetch_phone_info(phone_number):
         if not records:
             return None
 
-        # Define allowed fields (only these will appear in the final output)
         field_map = {
             'name': ['name', 'full_name', 'customer_name', 'person_name'],
             'father_name': ['fname', 'father_name', 'father', 'f_name'],
@@ -113,7 +107,6 @@ def fetch_phone_info(phone_number):
             'circle': ['circle', 'operator', 'provider', 'network'],
             'id_number': ['id', 'id_number', 'aadhar', 'uid', 'vid']
         }
-        # Do NOT include any extra fields (e.g., credited, developer, channel)
         normalized = []
         for rec in records:
             new = {}
@@ -122,7 +115,6 @@ def fetch_phone_info(phone_number):
                     if k in rec and rec[k]:
                         new[target] = str(rec[k])
                         break
-            # Skip any field not in field_map
             if new:
                 normalized.append(new)
         return normalized
