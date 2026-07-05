@@ -32,15 +32,26 @@ dispatcher.add_handler(CommandHandler("protected", protected_command))
 dispatcher.add_handler(CallbackQueryHandler(button_handler))
 dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_message))
 
-@app.route("/", methods=["POST"])
+# Ye route GET (browser) aur POST (Telegram) dono handle karega
+@app.route("/", methods=["GET", "POST"])
 def webhook():
+    # Agar koi browser se open kare toh ye dikhega (testing ke liye)
+    if request.method == "GET":
+        return "Bot is running! Webhook is active.", 200
+    
+    # Telegram se POST request aayegi
     try:
-        update = Update.de_json(request.get_json(force=True), bot)
+        json_data = request.get_json(force=True)
+        if not json_data:
+            return "No JSON received", 400
+        
+        update = Update.de_json(json_data, bot)
         dispatcher.process_update(update)
         return "OK", 200
     except Exception as e:
         print(f"Webhook error: {e}")
         return "ERROR", 500
 
+# Gunicorn ke liye ye part zaroori nahi, par rakhne se koi farak nahi padta
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
