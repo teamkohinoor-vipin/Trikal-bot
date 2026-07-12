@@ -271,7 +271,7 @@ def perform_phone_lookup(update, context, phone, raw):
 
     result = f"🔍 <b>Phone Lookup Results for {phone}</b>\n\n"
 
-    # ---------- DYNAMIC FIELD DISPLAY (NEW API SUPPORT) ----------
+    # ---------- DYNAMIC FIELD DISPLAY (with exclusion filter) ----------
     # Map API keys to user-friendly labels
     FIELD_LABELS = {
         'name': '👤 Name',
@@ -279,16 +279,21 @@ def perform_phone_lookup(update, context, phone, raw):
         'address': '📍 Address',
         'mobile': '📱 Mobile',
         'circle': '📡 Circle',
-        'id': '🆔 ID Number',          # new API uses 'id'
-        'id_number': '🆔 ID Number',   # old API fallback
+        'id': '🆔 ID Number',
+        'id_number': '🆔 ID Number',
         'email': '📧 Email',
         'alternate_number': '📞 Alternate'
     }
+    # 🔥 Keys to HIDE (API owner metadata, etc.) – add any unwanted fields here
+    EXCLUDED_KEYS = {'dev', 'developer', 'owner', 'api_owner', 'dev_id'}
 
     for i, rec in enumerate(records[:10], 1):
         result += f"✅ <b>Result {i}:</b>\n\n"
         # Loop through all keys present in the record
         for key, value in rec.items():
+            # 🔥 Skip excluded keys (e.g., API owner's username)
+            if key in EXCLUDED_KEYS:
+                continue
             # Skip empty or null values
             if not value or str(value).strip() in ['', 'N/A', 'null', 'None']:
                 continue
