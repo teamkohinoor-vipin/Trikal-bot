@@ -21,7 +21,7 @@ job_queue.set_dispatcher(dispatcher)
 dispatcher.job_queue = job_queue
 job_queue.start()
 
-# Register handlers
+# Register all handlers
 dispatcher.add_handler(CommandHandler("start", start))
 dispatcher.add_handler(CommandHandler("help", help_command))
 dispatcher.add_handler(CommandHandler("phone", phone_command))
