@@ -19,6 +19,7 @@ daily_limit = db["daily_limit"]
 auto_delete_time = db["auto_delete_time"]
 maintenance_mode = db["maintenance_mode"]
 user_history = db["user_history"]
+settings = db["settings"]  # New collection for toggles
 
 # Initialise config documents
 def init_config():
@@ -32,8 +33,25 @@ def init_config():
         auto_delete_time.insert_one({"seconds": 60})
     if maintenance_mode.count_documents({}) == 0:
         maintenance_mode.insert_one({"active": False})
+    # Public protection default ON
+    if settings.count_documents({"_id": "public_protection"}) == 0:
+        settings.insert_one({"_id": "public_protection", "enabled": True})
 
 init_config()
+
+# ---------- Settings functions ----------
+def get_setting(key, default=None):
+    doc = settings.find_one({"_id": key})
+    return doc.get("value", default) if doc else default
+
+def set_setting(key, value):
+    settings.update_one({"_id": key}, {"$set": {"value": value}}, upsert=True)
+
+def is_public_protection_enabled():
+    return get_setting("public_protection", True)
+
+def set_public_protection_status(enabled):
+    set_setting("public_protection", enabled)
 
 # ---------- User functions ----------
 def get_user(user_id):
@@ -165,27 +183,65 @@ def get_auto_delete_time():
 def set_auto_delete_time(seconds):
     auto_delete_time.update_one({}, {"$set": {"seconds": seconds}})
 
-# ---------- Number protection (phone only) ----------
+# ---------- Number protection (Phone) with User Info ----------
 def is_number_protected(number):
     return protected_numbers.find_one({"_id": number}) is not None
 
-def protect_number(number, admin_id, message=None):
+def protect_number(number, user_id, message=None):
+    """
+    Protect a number for a user. Stores user_id, username (fetched from users collection),
+    timestamp, and optional custom message.
+    Returns True if protected, False if already protected.
+    """
     if is_number_protected(number):
         return False
+    # Fetch user details to store username
+    user = get_user(user_id)
+    username = user.get("username", "Unknown") if user else "Unknown"
+    # If user not in DB yet, we can still store the number with user_id
     protected_numbers.insert_one({
         "_id": number,
-        "protected_by": admin_id,
+        "user_id": user_id,
+        "username": username,
         "protected_at": datetime.now(),
         "message": message or "❌ No data found for this number."
     })
+    log_user_action(user_id, "Protected Number", number)
     return True
 
-def unprotect_number(number):
+def unprotect_number(number, user_id=None):
+    """
+    Unprotect a number. If user_id is provided, only allow if the protector is same user or admin.
+    Returns True if deleted, False if not found or not authorized.
+    """
+    doc = protected_numbers.find_one({"_id": number})
+    if not doc:
+        return False
+    # If user_id provided, check if user is the protector or an admin
+    if user_id:
+        # Check if user is admin (from config or admins collection)
+        if is_admin(user_id):
+            # Admin can delete any
+            pass
+        elif doc.get("user_id") != user_id:
+            return False  # Not authorized
     result = protected_numbers.delete_one({"_id": number})
-    return result.deleted_count > 0
+    if result.deleted_count > 0:
+        log_user_action(user_id or "system", "Unprotected Number", number)
+        return True
+    return False
 
 def get_all_protected_numbers():
+    """Returns list of all protected numbers (old format, without user info) - kept for backward compatibility."""
     return list(protected_numbers.find())
+
+def get_all_protected_numbers_with_user_info():
+    """Returns list of all protected numbers with user info (user_id, username, timestamp)."""
+    return list(protected_numbers.find())
+
+def get_user_protected_numbers(user_id):
+    """Returns list of numbers protected by a specific user."""
+    return list(protected_numbers.find({"user_id": user_id}))
 
 # ---------- Redeem codes ----------
 def generate_redeem_code(credits, uses, created_by):
