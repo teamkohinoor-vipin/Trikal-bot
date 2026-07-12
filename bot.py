@@ -131,6 +131,9 @@ def get_main_keyboard(user_id):
         ["Support 👨‍💻", "Official Group 🚀"],
         ["Privacy Policy 🔒"]
     ]
+    # Add Protect Number button only if public protection is enabled
+    if is_public_protection_enabled():
+        keyboard.append(["Protect Number 🛡️", "My Protected 📋"])
     if is_admin(user_id):
         keyboard.append(["Admin Panel 👑"])
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
@@ -146,7 +149,7 @@ def get_admin_keyboard():
         ["Generate Code 🎁", "Toggle Group Free 🎯"],
         ["Toggle Global Free 🌍", "Set Daily Limit 🔢"],
         ["Referral Stats 📈", "Number Protection 🛡️"],
-        ["Admin Management 👨‍💼"],
+        ["Admin Management 👨‍💼", "Toggle Public Protection 🔄"],
         ["Auto-Delete Time ⏱️", "Maintenance Mode ⚠️"],
         ["Back to Main 🔙"]
     ], resize_keyboard=True)
@@ -358,6 +361,14 @@ def button_handler(update: Update, context: CallbackContext):
         file = create_search_result_file(context.user_data['last_search_result'], context.user_data['last_search_query'], context.user_data['last_search_type'], bot_username)
         context.bot.send_document(chat_id=query.message.chat_id, document=file, caption="✅ Download complete.")
         query.answer("File sent!")
+    # ========== 🔥 FIXED: Unprotect button handler ==========
+    elif data.startswith('unprotect_'):
+        number = data.replace('unprotect_', '')
+        if number:
+            perform_unprotect(update, context, number, user.id)
+            query.message.delete()
+        else:
+            query.edit_message_text("Error: Invalid number.")
 
 # ---------- Message Handler ----------
 def handle_message(update: Update, context: CallbackContext):
@@ -380,21 +391,46 @@ def handle_message(update: Update, context: CallbackContext):
     if chat.type == 'private' and not check_and_require_subscription(update, context, user.id):
         return
 
+    # Handle admin actions first
     if is_admin(user.id) and context.user_data.get('admin_action'):
         handle_admin_action(update, context, text)
         return
 
+    # Handle redeem state
     if context.user_data.get('state') == 'awaiting_redeem':
         context.user_data['state'] = None
         credits = use_redeem_code(text.upper(), user.id)
         update.message.reply_text(f"✅ {credits} credits added!" if credits else "❌ Invalid code.", reply_markup=get_main_keyboard(user.id))
         return
 
+    # Handle protect state (user entering number and optional message)
+    if context.user_data.get('state') == 'awaiting_protect_number':
+        context.user_data['state'] = None
+        parts = text.split(maxsplit=1)
+        if not parts:
+            update.message.reply_text("❌ Please send a valid number.", reply_markup=get_main_keyboard(user.id))
+            return
+        number = parts[0].strip()
+        message = parts[1] if len(parts) > 1 else None
+        # Normalize number to 10 digits
+        norm = normalize_phone_number(number)
+        if not norm:
+            update.message.reply_text("❌ Invalid Indian phone number. Please send a 10-digit number.", reply_markup=get_main_keyboard(user.id))
+            return
+        if protect_number(norm, user.id, message):
+            update.message.reply_text(f"✅ Number {norm} protected successfully!", reply_markup=get_main_keyboard(user.id))
+            log_user_action(user.id, "Protected Number (User)", norm)
+        else:
+            update.message.reply_text(f"❌ Number {norm} is already protected.", reply_markup=get_main_keyboard(user.id))
+        return
+
+    # Check if it's a phone number
     norm = normalize_phone_number(text)
     if norm:
         perform_phone_lookup(update, context, norm, text)
         return
 
+    # Menu navigation
     menu = context.user_data.get('menu_level', 'main')
     if menu == 'main':
         handle_main_menu(update, context, text)
@@ -439,6 +475,36 @@ def handle_main_menu(update, context, text):
         update.message.reply_text(f"🚀 Official Group: {OFFICIAL_GROUP_LINK}\n\nJoin for unlimited free searches!", parse_mode=ParseMode.HTML, reply_markup=get_main_keyboard(user.id))
     elif text == "Privacy Policy 🔒":
         update.message.reply_text("🔒 We do not store any personal data. Only credits and referral counts are kept.", parse_mode=ParseMode.HTML, reply_markup=get_main_keyboard(user.id))
+    # ---- NEW: Public Protection Buttons ----
+    elif text == "Protect Number 🛡️":
+        if not is_public_protection_enabled():
+            update.message.reply_text("❌ Public protection feature is currently disabled by admin.", reply_markup=get_main_keyboard(user.id))
+            return
+        context.user_data['state'] = 'awaiting_protect_number'
+        update.message.reply_text("🛡️ Send the 10-digit Indian mobile number you want to protect.\nYou can also add an optional custom message (separate with space after number).\n\nExample: `9876543210 This number is private.`", parse_mode=ParseMode.HTML, reply_markup=get_main_keyboard(user.id))
+    elif text == "My Protected 📋":
+        if not is_public_protection_enabled():
+            update.message.reply_text("❌ Public protection feature is currently disabled by admin.", reply_markup=get_main_keyboard(user.id))
+            return
+        protected_list = get_user_protected_numbers(user.id)
+        if not protected_list:
+            update.message.reply_text("📋 You haven't protected any numbers yet.", reply_markup=get_main_keyboard(user.id))
+            return
+        msg = "📋 <b>Your Protected Numbers</b>\n\n"
+        for p in protected_list:
+            number = p["_id"]
+            protected_at = p.get("protected_at", "Unknown date")
+            if isinstance(protected_at, datetime):
+                protected_at = protected_at.strftime("%Y-%m-%d %H:%M")
+            msg += f"📱 <code>{number}</code>\n🕒 {protected_at}\n"
+        # Inline buttons for unprotect
+        keyboard = []
+        for p in protected_list:
+            number = p["_id"]
+            keyboard.append([InlineKeyboardButton(f"🔓 Unprotect {number}", callback_data=f"unprotect_{number}")])
+        keyboard.append([InlineKeyboardButton("🔙 Back", callback_data='back_to_main')])
+        update.message.reply_text(msg, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(keyboard))
+    # ---- End new ----
     elif text == "Admin Panel 👑" and is_admin(user.id):
         context.user_data['menu_level'] = 'admin'
         update.message.reply_text("👑 Admin Panel", reply_markup=get_admin_keyboard())
@@ -538,6 +604,15 @@ def handle_admin_menu(update, context, text):
         else:
             msg = "No referrals yet."
         update.message.reply_text(msg, parse_mode=ParseMode.HTML, reply_markup=get_admin_keyboard())
+    # ---- NEW: Toggle Public Protection ----
+    elif text == "Toggle Public Protection 🔄":
+        current = is_public_protection_enabled()
+        new_status = not current
+        set_public_protection_status(new_status)
+        status_text = "ON" if new_status else "OFF"
+        update.message.reply_text(f"🔄 Public Protection is now <b>{status_text}</b>. Users can {'now' if new_status else 'no longer'} protect numbers.", parse_mode=ParseMode.HTML, reply_markup=get_admin_keyboard())
+        log_user_action(user.id, "Toggled Public Protection", status_text)
+    # ---- End new ----
 
 def handle_number_protection_menu(update, context, text):
     user = update.effective_user
@@ -551,14 +626,28 @@ def handle_number_protection_menu(update, context, text):
         context.user_data['admin_action'] = 'unprotect_number'
         update.message.reply_text("🛡️ Send number to unprotect:", reply_markup=get_number_protection_keyboard())
     elif text == "Protected List 📋🛡️":
-        protected = get_all_protected_numbers()
+        # Updated: show with user info
+        protected = get_all_protected_numbers_with_user_info()
         if not protected:
             update.message.reply_text("No protected numbers.", reply_markup=get_number_protection_keyboard())
-        else:
-            msg = "🛡️ Protected Numbers:\n"
-            for p in protected[:20]:
-                msg += f"📱 <code>{p['_id']}</code> - {p.get('message', 'No message')}\n"
-            update.message.reply_text(msg, parse_mode=ParseMode.HTML, reply_markup=get_number_protection_keyboard())
+            return
+        msg = "🛡️ <b>Protected Numbers (with User Info)</b>\n\n"
+        for p in protected[:20]:
+            number = p["_id"]
+            user_id = p.get("user_id", "Unknown")
+            username = p.get("username", "Unknown")
+            protected_at = p.get("protected_at")
+            if isinstance(protected_at, datetime):
+                protected_at = protected_at.strftime("%Y-%m-%d %H:%M")
+            else:
+                protected_at = str(protected_at) if protected_at else "Unknown"
+            msg += f"📱 <code>{number}</code>\n👤 User: <code>{user_id}</code> ({username})\n🕒 {protected_at}\n"
+            if p.get("message"):
+                msg += f"📝 Message: {p['message']}\n"
+            msg += "\n"
+        if len(protected) > 20:
+            msg += f"\n... and {len(protected)-20} more."
+        update.message.reply_text(msg, parse_mode=ParseMode.HTML, reply_markup=get_number_protection_keyboard())
 
 def handle_admin_management_menu(update, context, text):
     user = update.effective_user
@@ -725,19 +814,21 @@ def handle_admin_action(update, context, text):
         else:
             num = parts[0]
             msg = parts[1] if len(parts) > 1 else None
+            # Admin protection can be done with admin_id
             if protect_number(num, user.id, msg):
                 update.message.reply_text(f"✅ Number {num} protected.", reply_markup=get_number_protection_keyboard())
-                log_user_action(user.id, "Protected Number", num)
+                log_user_action(user.id, "Protected Number (Admin)", num)
             else:
                 update.message.reply_text("❌ Already protected.", reply_markup=get_number_protection_keyboard())
         context.user_data['admin_action'] = None
     elif action == 'unprotect_number':
         num = text.strip()
-        if unprotect_number(num):
+        # Admin can unprotect any
+        if unprotect_number(num, user.id):  # pass admin id
             update.message.reply_text(f"✅ Number {num} unprotected.", reply_markup=get_number_protection_keyboard())
-            log_user_action(user.id, "Unprotected Number", num)
+            log_user_action(user.id, "Unprotected Number (Admin)", num)
         else:
-            update.message.reply_text("❌ Not protected.", reply_markup=get_number_protection_keyboard())
+            update.message.reply_text("❌ Not protected or not authorized.", reply_markup=get_number_protection_keyboard())
         context.user_data['admin_action'] = None
     elif action == 'add_admin':
         try:
@@ -764,6 +855,15 @@ def handle_admin_action(update, context, text):
         context.user_data['admin_action'] = None
     else:
         context.user_data['admin_action'] = None
+
+# ---------- User Protection Functions ----------
+def perform_unprotect(update, context, number, user_id):
+    """Unprotect a number by a user (or admin)."""
+    if unprotect_number(number, user_id):
+        update.effective_message.reply_text(f"✅ Number {number} unprotected successfully.", reply_markup=get_main_keyboard(user_id))
+        log_user_action(user_id, "Unprotected Number (User)", number)
+    else:
+        update.effective_message.reply_text(f"❌ Could not unprotect {number}. It may not be protected or you are not the protector.", reply_markup=get_main_keyboard(user_id))
 
 # ---------- Additional Admin Commands ----------
 def admin_command(update: Update, context: CallbackContext):
@@ -831,22 +931,22 @@ def unprotect_command(update: Update, context: CallbackContext):
         update.message.reply_text("Usage: /unprotect <number>")
         return
     num = context.args[0]
-    if unprotect_number(num):
+    if unprotect_number(num, update.effective_user.id):
         update.message.reply_text(f"✅ Number {num} unprotected.")
     else:
-        update.message.reply_text("❌ Not protected.")
+        update.message.reply_text("❌ Not protected or not authorized.")
 
 def protected_command(update: Update, context: CallbackContext):
     if not is_admin(update.effective_user.id):
         update.message.reply_text("❌ Admin only.")
         return
-    protected = get_all_protected_numbers()
+    protected = get_all_protected_numbers_with_user_info()
     if not protected:
         update.message.reply_text("No protected numbers.")
         return
     msg = "🛡️ Protected numbers:\n"
     for p in protected[:20]:
-        msg += f"{p['_id']} - {p.get('message', 'No message')}\n"
+        msg += f"{p['_id']} - protected by {p.get('user_id', 'Unknown')} at {p.get('protected_at', '')}\n"
     update.message.reply_text(msg, parse_mode=ParseMode.HTML)
 
 def addadmin_command(update: Update, context: CallbackContext):
