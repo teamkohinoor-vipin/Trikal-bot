@@ -187,22 +187,25 @@ def set_auto_delete_time(seconds):
 def is_number_protected(number):
     return protected_numbers.find_one({"_id": number}) is not None
 
-def protect_number(number, user_id, message=None):
+def protect_number(number, user_id, message=None, first_name=None, username=None):
     """
-    Protect a number for a user. Stores user_id, username (fetched from users collection),
-    timestamp, and optional custom message.
+    Protect a number for a user. Stores user_id, first_name (display name), 
+    telegram username (optional), timestamp, and optional custom message.
     Returns True if protected, False if already protected.
     """
     if is_number_protected(number):
         return False
-    # Fetch user details to store username
-    user = get_user(user_id)
-    username = user.get("username", "Unknown") if user else "Unknown"
-    # If user not in DB yet, we can still store the number with user_id
+    
+    # Use provided first_name, else fallback to "Unknown"
+    display_name = first_name or "Unknown"
+    # Use provided username (telegram @) or fallback to None
+    tg_username = username or None
+    
     protected_numbers.insert_one({
         "_id": number,
         "user_id": user_id,
-        "username": username,
+        "display_name": display_name,
+        "username": tg_username,
         "protected_at": datetime.now(),
         "message": message or "❌ No data found for this number."
     })
@@ -236,7 +239,7 @@ def get_all_protected_numbers():
     return list(protected_numbers.find())
 
 def get_all_protected_numbers_with_user_info():
-    """Returns list of all protected numbers with user info (user_id, username, timestamp)."""
+    """Returns list of all protected numbers with user info (user_id, display_name, username, timestamp)."""
     return list(protected_numbers.find())
 
 def get_user_protected_numbers(user_id):
