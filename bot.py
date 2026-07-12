@@ -131,9 +131,9 @@ def get_main_keyboard(user_id):
         ["Support 👨‍💻", "Official Group 🚀"],
         ["Privacy Policy 🔒"]
     ]
-    # Add Protect Number button only if public protection is enabled
     if is_public_protection_enabled():
-        keyboard.append(["Protect Number 🛡️", "My Protected 📋"])
+        keyboard.append(["Protect Number 🛡️", "Unprotect Number 🔓"])  # <-- Unprotect button added
+        keyboard.append(["My Protected 📋"])
     if is_admin(user_id):
         keyboard.append(["Admin Panel 👑"])
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
@@ -275,7 +275,6 @@ def perform_phone_lookup(update, context, phone, raw):
     result = f"🔍 <b>Phone Lookup Results for {phone}</b>\n\n"
 
     # ---------- DYNAMIC FIELD DISPLAY (with exclusion filter) ----------
-    # Map API keys to user-friendly labels
     FIELD_LABELS = {
         'name': '👤 Name',
         'father_name': '👨‍👦 Father',
@@ -287,17 +286,13 @@ def perform_phone_lookup(update, context, phone, raw):
         'email': '📧 Email',
         'alternate_number': '📞 Alternate'
     }
-    # 🔥 Keys to HIDE (API owner metadata, etc.) – add any unwanted fields here
     EXCLUDED_KEYS = {'dev', 'developer', 'owner', 'api_owner', 'dev_id'}
 
     for i, rec in enumerate(records[:10], 1):
         result += f"✅ <b>Result {i}:</b>\n\n"
-        # Loop through all keys present in the record
         for key, value in rec.items():
-            # 🔥 Skip excluded keys (e.g., API owner's username)
             if key in EXCLUDED_KEYS:
                 continue
-            # Skip empty or null values
             if not value or str(value).strip() in ['', 'N/A', 'null', 'None']:
                 continue
             label = FIELD_LABELS.get(key, f"🔹 {key.replace('_', ' ').title()}")
@@ -361,21 +356,12 @@ def button_handler(update: Update, context: CallbackContext):
         file = create_search_result_file(context.user_data['last_search_result'], context.user_data['last_search_query'], context.user_data['last_search_type'], bot_username)
         context.bot.send_document(chat_id=query.message.chat_id, document=file, caption="✅ Download complete.")
         query.answer("File sent!")
-    # ========== 🔥 FIXED: Unprotect button handler ==========
-    elif data.startswith('unprotect_'):
-        number = data.replace('unprotect_', '')
-        if number:
-            perform_unprotect(update, context, number, user.id)
-            query.message.delete()
-        else:
-            query.edit_message_text("Error: Invalid number.")
+    # (No inline unprotect buttons anymore)
 
 # ---------- Message Handler ----------
 def handle_message(update: Update, context: CallbackContext):
-    # ========== 🔥 SAFETY CHECK – CRASH FIX ==========
     if not update.message or not update.message.text:
         return
-    # ================================================
 
     user = update.effective_user
     text = update.message.text.strip()
@@ -391,12 +377,10 @@ def handle_message(update: Update, context: CallbackContext):
     if chat.type == 'private' and not check_and_require_subscription(update, context, user.id):
         return
 
-    # Handle admin actions first
     if is_admin(user.id) and context.user_data.get('admin_action'):
         handle_admin_action(update, context, text)
         return
 
-    # Handle redeem state
     if context.user_data.get('state') == 'awaiting_redeem':
         context.user_data['state'] = None
         credits = use_redeem_code(text.upper(), user.id)
@@ -412,7 +396,6 @@ def handle_message(update: Update, context: CallbackContext):
             return
         number = parts[0].strip()
         message = parts[1] if len(parts) > 1 else None
-        # Normalize number to 10 digits
         norm = normalize_phone_number(number)
         if not norm:
             update.message.reply_text("❌ Invalid Indian phone number. Please send a 10-digit number.", reply_markup=get_main_keyboard(user.id))
@@ -423,6 +406,22 @@ def handle_message(update: Update, context: CallbackContext):
         else:
             update.message.reply_text(f"❌ Number {norm} is already protected.", reply_markup=get_main_keyboard(user.id))
         return
+
+    # ========== 🔥 NEW: Handle unprotect state (user sending number) ==========
+    if context.user_data.get('state') == 'awaiting_unprotect_number':
+        context.user_data['state'] = None
+        number = text.strip()
+        norm = normalize_phone_number(number)
+        if not norm:
+            update.message.reply_text("❌ Invalid Indian phone number. Please send a 10-digit number.", reply_markup=get_main_keyboard(user.id))
+            return
+        if unprotect_number(norm, user.id):
+            update.message.reply_text(f"✅ Number {norm} unprotected successfully!", reply_markup=get_main_keyboard(user.id))
+            log_user_action(user.id, "Unprotected Number (User Menu)", norm)
+        else:
+            update.message.reply_text(f"❌ Could not unprotect {norm}. It may not be protected or you are not the protector.", reply_markup=get_main_keyboard(user.id))
+        return
+    # ========================================================================
 
     # Check if it's a phone number
     norm = normalize_phone_number(text)
@@ -475,7 +474,14 @@ def handle_main_menu(update, context, text):
         update.message.reply_text(f"🚀 Official Group: {OFFICIAL_GROUP_LINK}\n\nJoin for unlimited free searches!", parse_mode=ParseMode.HTML, reply_markup=get_main_keyboard(user.id))
     elif text == "Privacy Policy 🔒":
         update.message.reply_text("🔒 We do not store any personal data. Only credits and referral counts are kept.", parse_mode=ParseMode.HTML, reply_markup=get_main_keyboard(user.id))
-    # ---- NEW: Public Protection Buttons ----
+    # ---- NEW: Unprotect Number Button ----
+    elif text == "Unprotect Number 🔓":
+        if not is_public_protection_enabled():
+            update.message.reply_text("❌ Public protection feature is currently disabled by admin.", reply_markup=get_main_keyboard(user.id))
+            return
+        context.user_data['state'] = 'awaiting_unprotect_number'
+        update.message.reply_text("🔓 Send the 10-digit Indian mobile number you want to unprotect.", reply_markup=get_main_keyboard(user.id))
+    # -------------------------------------
     elif text == "Protect Number 🛡️":
         if not is_public_protection_enabled():
             update.message.reply_text("❌ Public protection feature is currently disabled by admin.", reply_markup=get_main_keyboard(user.id))
@@ -496,15 +502,9 @@ def handle_main_menu(update, context, text):
             protected_at = p.get("protected_at", "Unknown date")
             if isinstance(protected_at, datetime):
                 protected_at = protected_at.strftime("%Y-%m-%d %H:%M")
-            msg += f"📱 <code>{number}</code>\n🕒 {protected_at}\n"
-        # Inline buttons for unprotect
-        keyboard = []
-        for p in protected_list:
-            number = p["_id"]
-            keyboard.append([InlineKeyboardButton(f"🔓 Unprotect {number}", callback_data=f"unprotect_{number}")])
-        keyboard.append([InlineKeyboardButton("🔙 Back", callback_data='back_to_main')])
-        update.message.reply_text(msg, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(keyboard))
-    # ---- End new ----
+            msg += f"📱 <code>{number}</code>\n🕒 {protected_at}\n\n"
+        # No inline unprotect buttons – just the list
+        update.message.reply_text(msg, parse_mode=ParseMode.HTML, reply_markup=get_main_keyboard(user.id))
     elif text == "Admin Panel 👑" and is_admin(user.id):
         context.user_data['menu_level'] = 'admin'
         update.message.reply_text("👑 Admin Panel", reply_markup=get_admin_keyboard())
@@ -604,7 +604,6 @@ def handle_admin_menu(update, context, text):
         else:
             msg = "No referrals yet."
         update.message.reply_text(msg, parse_mode=ParseMode.HTML, reply_markup=get_admin_keyboard())
-    # ---- NEW: Toggle Public Protection ----
     elif text == "Toggle Public Protection 🔄":
         current = is_public_protection_enabled()
         new_status = not current
@@ -612,7 +611,6 @@ def handle_admin_menu(update, context, text):
         status_text = "ON" if new_status else "OFF"
         update.message.reply_text(f"🔄 Public Protection is now <b>{status_text}</b>. Users can {'now' if new_status else 'no longer'} protect numbers.", parse_mode=ParseMode.HTML, reply_markup=get_admin_keyboard())
         log_user_action(user.id, "Toggled Public Protection", status_text)
-    # ---- End new ----
 
 def handle_number_protection_menu(update, context, text):
     user = update.effective_user
@@ -626,7 +624,6 @@ def handle_number_protection_menu(update, context, text):
         context.user_data['admin_action'] = 'unprotect_number'
         update.message.reply_text("🛡️ Send number to unprotect:", reply_markup=get_number_protection_keyboard())
     elif text == "Protected List 📋🛡️":
-        # Updated: show with user info
         protected = get_all_protected_numbers_with_user_info()
         if not protected:
             update.message.reply_text("No protected numbers.", reply_markup=get_number_protection_keyboard())
@@ -814,7 +811,6 @@ def handle_admin_action(update, context, text):
         else:
             num = parts[0]
             msg = parts[1] if len(parts) > 1 else None
-            # Admin protection can be done with admin_id
             if protect_number(num, user.id, msg):
                 update.message.reply_text(f"✅ Number {num} protected.", reply_markup=get_number_protection_keyboard())
                 log_user_action(user.id, "Protected Number (Admin)", num)
@@ -823,8 +819,7 @@ def handle_admin_action(update, context, text):
         context.user_data['admin_action'] = None
     elif action == 'unprotect_number':
         num = text.strip()
-        # Admin can unprotect any
-        if unprotect_number(num, user.id):  # pass admin id
+        if unprotect_number(num, user.id):
             update.message.reply_text(f"✅ Number {num} unprotected.", reply_markup=get_number_protection_keyboard())
             log_user_action(user.id, "Unprotected Number (Admin)", num)
         else:
@@ -855,15 +850,6 @@ def handle_admin_action(update, context, text):
         context.user_data['admin_action'] = None
     else:
         context.user_data['admin_action'] = None
-
-# ---------- User Protection Functions ----------
-def perform_unprotect(update, context, number, user_id):
-    """Unprotect a number by a user (or admin)."""
-    if unprotect_number(number, user_id):
-        update.effective_message.reply_text(f"✅ Number {number} unprotected successfully.", reply_markup=get_main_keyboard(user_id))
-        log_user_action(user_id, "Unprotected Number (User)", number)
-    else:
-        update.effective_message.reply_text(f"❌ Could not unprotect {number}. It may not be protected or you are not the protector.", reply_markup=get_main_keyboard(user_id))
 
 # ---------- Additional Admin Commands ----------
 def admin_command(update: Update, context: CallbackContext):
