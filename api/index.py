@@ -3,7 +3,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from flask import Flask, request
 from telegram import Update, Bot
-from telegram.ext import Dispatcher, CommandHandler, CallbackQueryHandler, MessageHandler, Filters
+from telegram.ext import Dispatcher, CommandHandler, CallbackQueryHandler, MessageHandler, Filters, JobQueue
 from bot import *
 from config import BOT_TOKEN
 
@@ -15,7 +15,13 @@ if not BOT_TOKEN:
 bot = Bot(token=BOT_TOKEN)
 dispatcher = Dispatcher(bot, None, workers=1)
 
-# Register all handlers
+# 🔥 JobQueue for auto-delete
+job_queue = JobQueue()
+job_queue.set_dispatcher(dispatcher)
+dispatcher.job_queue = job_queue
+job_queue.start()
+
+# Register handlers
 dispatcher.add_handler(CommandHandler("start", start))
 dispatcher.add_handler(CommandHandler("help", help_command))
 dispatcher.add_handler(CommandHandler("phone", phone_command))
@@ -32,19 +38,14 @@ dispatcher.add_handler(CommandHandler("protected", protected_command))
 dispatcher.add_handler(CallbackQueryHandler(button_handler))
 dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_message))
 
-# Ye route GET (browser) aur POST (Telegram) dono handle karega
 @app.route("/", methods=["GET", "POST"])
 def webhook():
-    # Agar koi browser se open kare toh ye dikhega (testing ke liye)
     if request.method == "GET":
         return "Bot is running! Webhook is active.", 200
-    
-    # Telegram se POST request aayegi
     try:
         json_data = request.get_json(force=True)
         if not json_data:
             return "No JSON received", 400
-        
         update = Update.de_json(json_data, bot)
         dispatcher.process_update(update)
         return "OK", 200
@@ -52,6 +53,5 @@ def webhook():
         print(f"Webhook error: {e}")
         return "ERROR", 500
 
-# Gunicorn ke liye ye part zaroori nahi, par rakhne se koi farak nahi padta
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
