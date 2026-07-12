@@ -44,83 +44,49 @@ def create_search_result_file(result_text, query, search_type, bot_username):
     f.name = create_safe_filename(query, search_type, bot_username)
     return f
 
+# ---------- FIXED fetch_phone_info for new API ----------
 def fetch_phone_info(phone_number):
-    url = PHONE_API_NEW.format(num=phone_number)
+    """
+    Fetch phone details from new API.
+    Returns a list of subscriber dicts (empty if no data or error).
+    """
+    url = PHONE_API_NEW.format(num=phone_number)  # expects {num} in config
     try:
-        resp = requests.get(url, timeout=30)
+        # 🔥 Reduced timeout to 5 seconds – prevents worker timeout
+        resp = requests.get(url, timeout=5)
         if resp.status_code != 200:
             logger.warning(f"API returned {resp.status_code}")
-            return None
+            return []
 
-        raw_text = resp.text
-        start = raw_text.find('{')
-        if start == -1:
-            return None
-        depth = 0
-        end = start
-        for i, ch in enumerate(raw_text[start:], start):
-            if ch == '{':
-                depth += 1
-            elif ch == '}':
-                depth -= 1
-                if depth == 0:
-                    end = i + 1
-                    break
-        if end <= start:
-            return None
-        json_text = raw_text[start:end]
-        data = json.loads(json_text)
+        data = resp.json()
 
-        records = None
-        if isinstance(data, dict) and data.get('status') == 'success' and 'data' in data:
-            records = data['data'].get('records')
-        else:
-            def extract_records(obj, depth=0):
-                if depth > 5:
-                    return None
-                if isinstance(obj, dict):
-                    if any(k in obj for k in ('name', 'mobile', 'address', 'fname')):
-                        return [obj]
-                    for v in obj.values():
-                        res = extract_records(v, depth+1)
-                        if res:
-                            return res
-                elif isinstance(obj, list):
-                    if obj and isinstance(obj[0], dict):
-                        if any(k in obj[0] for k in ('name', 'mobile', 'address', 'fname')):
-                            return obj
-                    for item in obj:
-                        res = extract_records(item, depth+1)
-                        if res:
-                            return res
-                return None
-            records = extract_records(data)
+        # ---- Handle new API format ----
+        if data.get('status') == 'success' and 'data' in data:
+            subscriber = data['data'].get('subscriber')
+            if subscriber and isinstance(subscriber, dict):
+                # Return as a list (compatible with old code)
+                return [subscriber]
 
-        if not records:
-            return None
+        # ---- Fallback for old format or other structures ----
+        # If direct list
+        if isinstance(data, list):
+            return data
+        # If 'records' key exists
+        if isinstance(data, dict) and 'records' in data:
+            return data['records']
 
-        field_map = {
-            'name': ['name', 'full_name', 'customer_name', 'person_name'],
-            'father_name': ['fname', 'father_name', 'father', 'f_name'],
-            'address': ['address', 'addr', 'location', 'street'],
-            'mobile': ['mobile', 'phone', 'number', 'contact', 'mobileno'],
-            'circle': ['circle', 'operator', 'provider', 'network'],
-            'id_number': ['id', 'id_number', 'aadhar', 'uid', 'vid']
-        }
-        normalized = []
-        for rec in records:
-            new = {}
-            for target, keys in field_map.items():
-                for k in keys:
-                    if k in rec and rec[k]:
-                        new[target] = str(rec[k])
-                        break
-            if new:
-                normalized.append(new)
-        return normalized
+        # No data found
+        return []
+
+    except requests.exceptions.Timeout:
+        logger.warning(f"⏱️ API timeout for {phone_number} (5s)")
+        return []
+    except requests.exceptions.ConnectionError:
+        logger.warning(f"🔌 API connection error for {phone_number}")
+        return []
     except json.JSONDecodeError as e:
-        logger.error(f"JSON decode error: {e}")
-        return None
+        logger.error(f"❌ JSON decode error: {e}")
+        return []
     except Exception as e:
-        logger.error(f"API error: {e}")
-        return None
+        logger.error(f"❌ API error: {e}")
+        return []
