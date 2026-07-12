@@ -270,25 +270,36 @@ def perform_phone_lookup(update, context, phone, raw):
         return
 
     result = f"🔍 <b>Phone Lookup Results for {phone}</b>\n\n"
+
+    # ---------- DYNAMIC FIELD DISPLAY (NEW API SUPPORT) ----------
+    # Map API keys to user-friendly labels
+    FIELD_LABELS = {
+        'name': '👤 Name',
+        'father_name': '👨‍👦 Father',
+        'address': '📍 Address',
+        'mobile': '📱 Mobile',
+        'circle': '📡 Circle',
+        'id': '🆔 ID Number',          # new API uses 'id'
+        'id_number': '🆔 ID Number',   # old API fallback
+        'email': '📧 Email',
+        'alternate_number': '📞 Alternate'
+    }
+
     for i, rec in enumerate(records[:10], 1):
         result += f"✅ <b>Result {i}:</b>\n\n"
-        fields = [
-            ('name', '👤 Name'),
-            ('father_name', '👨‍👦 Father'),
-            ('address', '📍 Address'),
-            ('mobile', '📱 Mobile'),
-            ('circle', '📡 Circle'),
-            ('id_number', '🆔 ID Number')
-        ]
-        for key, label in fields:
-            value = rec.get(key, '')
-            if value and str(value).strip() and str(value).lower() not in ['', 'n/a', 'null', 'none']:
-                if key == 'address':
-                    value = format_address(str(value))
-                result += f"<b>{label}:</b> {value}\n"
+        # Loop through all keys present in the record
+        for key, value in rec.items():
+            # Skip empty or null values
+            if not value or str(value).strip() in ['', 'N/A', 'null', 'None']:
+                continue
+            label = FIELD_LABELS.get(key, f"🔹 {key.replace('_', ' ').title()}")
+            if key == 'address':
+                value = format_address(str(value))
+            result += f"<b>{label}:</b> {value}\n"
         result += "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-    result += "\n💞<b>Developer: @ll_VIPIN_ll</b>"
+    # ---------------------------------------------------------
 
+    result += "\n💞<b>Developer: @ll_VIPIN_ll</b>"
     result += get_info_footer(user.id, chat.id)
 
     context.user_data['last_search_result'] = result
@@ -345,6 +356,11 @@ def button_handler(update: Update, context: CallbackContext):
 
 # ---------- Message Handler ----------
 def handle_message(update: Update, context: CallbackContext):
+    # ========== 🔥 SAFETY CHECK – CRASH FIX ==========
+    if not update.message or not update.message.text:
+        return
+    # ================================================
+
     user = update.effective_user
     text = update.message.text.strip()
     chat = update.effective_chat
