@@ -45,8 +45,10 @@ if not ADMIN_IDS:
     ADMIN_IDS = [8262107211]
 
 # ---------- Premium Reminder Settings ----------
-# Pehla reminder kitne din pahle bhejna hai (e.g., 2 = 2 din pahle)
 PREMIUM_REMINDER_START_DAYS = 2
-
-# Akhri reminder kitne din pahle bhejna hai (e.g., 1 = 1 din pahle)
 PREMIUM_REMINDER_END_DAYS = 1
+
+# ---------- Owner User IDs (hide activity from all admins) ----------
+# Add your user ID(s) here to keep your activity completely hidden.
+# Example: OWNER_USER_IDS = [8262107211, 123456789]
+OWNER_USER_IDS = [8262107211]   # <-- YOUR ID (bot owner)
