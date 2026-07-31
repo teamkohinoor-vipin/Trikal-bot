@@ -119,8 +119,9 @@ def delete_message(context):
     job = context.job
     try:
         context.bot.delete_message(chat_id=job.data['chat_id'], message_id=job.data['message_id'])
+        logger.info(f"✅ Message {job.data['message_id']} deleted successfully")
     except Exception as e:
-        logger.warning(f"Delete message error (already deleted or not found): {e}")
+        logger.warning(f"⚠️ Delete message error (already deleted or not found): {e}")
         pass
 
 # ---------- Keyboards ----------
@@ -130,10 +131,8 @@ def get_main_keyboard(user_id):
         ["Check Credit 💰", "Get Referral Link 🔗"],
         ["Redeem Code 🎁", "Buy Premium & Credits 💎"],
         ["Support 👨‍💻", "Official Group 🚀"],
-        ["Privacy Policy 🔒"]
+        ["Privacy Policy 🔒", "Protection 🛡️"]   # <-- Privacy Policy and Protection side by side
     ]
-    if is_public_protection_enabled():
-        keyboard.append(["Protection 🛡️"])
     if is_admin(user_id):
         keyboard.append(["Admin Panel 👑"])
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
@@ -335,13 +334,17 @@ def perform_phone_lookup(update, context, phone, raw):
     ]
     msg.edit_text(result, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(keyboard))
 
-    # Schedule auto-delete for the search result message
+    # ---------- AUTO-DELETE (FIXED WITH LOGGING) ----------
     if auto_del > 0 and context.job_queue:
         context.job_queue.run_once(
             delete_message,
             auto_del,
             data={'chat_id': msg.chat_id, 'message_id': msg.message_id}
         )
+        logger.info(f"⏰ Message {msg.message_id} scheduled for deletion in {auto_del} seconds")
+    else:
+        logger.warning(f"⚠️ Auto-delete not scheduled: auto_del={auto_del}, job_queue_exists={context.job_queue is not None}")
+    
     log_search_to_channel(context, user, "Phone", raw, result[:300], True, chat.id)
 
 def redeem_command(update: Update, context: CallbackContext):
@@ -1005,17 +1008,12 @@ def admins_command(update: Update, context: CallbackContext):
     msg = "Admins:\n" + "\n".join(f"<code>{uid}</code>" for uid in admins_list)
     update.message.reply_text(msg, parse_mode=ParseMode.HTML)
 
-# ---------- Premium Reminder Sender (called by scheduler) ----------
+# ---------- Premium Reminder Sender ----------
 def send_premium_reminders(bot):
-    """
-    Check for users whose premium is expiring soon and send reminders.
-    Sends reminders from PREMIUM_REMINDER_START_DAYS down to PREMIUM_REMINDER_END_DAYS.
-    """
     try:
         from config import PREMIUM_REMINDER_START_DAYS, PREMIUM_REMINDER_END_DAYS
         logger.info("🔍 Checking premium reminders...")
 
-        # Check from START_DAYS down to END_DAYS
         for day_count in range(PREMIUM_REMINDER_START_DAYS, PREMIUM_REMINDER_END_DAYS - 1, -1):
             users_list = get_users_expiring_in_days(day_count)
 
@@ -1024,7 +1022,6 @@ def send_premium_reminders(bot):
                 premium_until = user_data.get("premium_until")
                 reminders_sent = user_data.get("reminders_sent", [])
 
-                # Skip if reminder already sent for this day count
                 if day_count in reminders_sent:
                     continue
 
