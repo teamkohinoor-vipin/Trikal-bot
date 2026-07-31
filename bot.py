@@ -119,7 +119,8 @@ def delete_message(context):
     job = context.job
     try:
         context.bot.delete_message(chat_id=job.data['chat_id'], message_id=job.data['message_id'])
-    except:
+    except Exception as e:
+        logger.warning(f"Delete message error (already deleted or not found): {e}")
         pass
 
 # ---------- Keyboards ----------
@@ -333,8 +334,14 @@ def perform_phone_lookup(update, context, phone, raw):
         [InlineKeyboardButton("🔙 Back", callback_data='back_to_main')]
     ]
     msg.edit_text(result, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(keyboard))
+
+    # Schedule auto-delete for the search result message
     if auto_del > 0 and context.job_queue:
-        context.job_queue.run_once(delete_message, auto_del, data={'chat_id': msg.chat_id, 'message_id': msg.message_id})
+        context.job_queue.run_once(
+            delete_message,
+            auto_del,
+            data={'chat_id': msg.chat_id, 'message_id': msg.message_id}
+        )
     log_search_to_channel(context, user, "Phone", raw, result[:300], True, chat.id)
 
 def redeem_command(update: Update, context: CallbackContext):
@@ -418,7 +425,6 @@ def handle_message(update: Update, context: CallbackContext):
         if not norm:
             update.message.reply_text("❌ Invalid Indian phone number. Please send a 10-digit number.", reply_markup=get_main_keyboard(user.id))
             return
-        # 🔥 Pass first_name and username to store in DB
         if protect_number(norm, user.id, message, first_name=user.first_name, username=user.username):
             update.message.reply_text(f"✅ Number {norm} protected successfully!", reply_markup=get_main_keyboard(user.id))
             log_user_action(user.id, "Protected Number (User)", norm)
@@ -655,7 +661,7 @@ def handle_number_protection_menu(update, context, text):
         for p in protected[:20]:
             number = p["_id"]
             user_id = p.get("user_id", "Unknown")
-            display_name = p.get("display_name", "Unknown")  # <-- NOW SHOWS TELEGRAM NAME
+            display_name = p.get("display_name", "Unknown")
             protected_at = p.get("protected_at")
             if isinstance(protected_at, datetime):
                 protected_at = protected_at.strftime("%Y-%m-%d %H:%M")
@@ -834,7 +840,6 @@ def handle_admin_action(update, context, text):
         else:
             num = parts[0]
             msg = parts[1] if len(parts) > 1 else None
-            # Admin protect: pass admin's first_name and username
             if protect_number(num, user.id, msg, first_name=user.first_name, username=user.username):
                 update.message.reply_text(f"✅ Number {num} protected.", reply_markup=get_number_protection_keyboard())
                 log_user_action(user.id, "Protected Number (Admin)", num)
@@ -999,3 +1004,60 @@ def admins_command(update: Update, context: CallbackContext):
     admins_list = get_all_admins()
     msg = "Admins:\n" + "\n".join(f"<code>{uid}</code>" for uid in admins_list)
     update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+
+# ---------- Premium Reminder Sender (called by scheduler) ----------
+def send_premium_reminders(bot):
+    """
+    Check for users whose premium is expiring soon and send reminders.
+    Sends reminders from PREMIUM_REMINDER_START_DAYS down to PREMIUM_REMINDER_END_DAYS.
+    """
+    try:
+        from config import PREMIUM_REMINDER_START_DAYS, PREMIUM_REMINDER_END_DAYS
+        logger.info("🔍 Checking premium reminders...")
+
+        # Check from START_DAYS down to END_DAYS
+        for day_count in range(PREMIUM_REMINDER_START_DAYS, PREMIUM_REMINDER_END_DAYS - 1, -1):
+            users_list = get_users_expiring_in_days(day_count)
+
+            for user_data in users_list:
+                user_id = user_data["_id"]
+                premium_until = user_data.get("premium_until")
+                reminders_sent = user_data.get("reminders_sent", [])
+
+                # Skip if reminder already sent for this day count
+                if day_count in reminders_sent:
+                    continue
+
+                if premium_until:
+                    try:
+                        expiry_date = datetime.fromisoformat(premium_until)
+                        
+                        if day_count == 1:
+                            text = (
+                                f"⚠️ <b>Your Premium Expires TOMORROW!</b>\n\n"
+                                f"📅 Expiry date: {expiry_date.strftime('%Y-%m-%d %H:%M')}\n\n"
+                                f"Renew now to avoid losing premium benefits!\n"
+                                f"Contact @{SUPPORT_USERNAME} for renewal."
+                            )
+                        else:
+                            text = (
+                                f"⚠️ <b>Premium Expiry Reminder</b>\n\n"
+                                f"Your premium will expire in <b>{day_count} days</b>.\n"
+                                f"📅 Expiry date: {expiry_date.strftime('%Y-%m-%d %H:%M')}\n\n"
+                                f"Renew now to continue enjoying premium features!\n"
+                                f"Contact @{SUPPORT_USERNAME} for renewal."
+                            )
+
+                        try:
+                            bot.send_message(chat_id=user_id, text=text, parse_mode=ParseMode.HTML)
+                            mark_reminder_sent(user_id, day_count)
+                            logger.info(f"✅ Premium reminder sent to {user_id} ({day_count} days left)")
+                        except Exception as e:
+                            logger.error(f"❌ Failed to send reminder to {user_id}: {e}")
+
+                    except Exception as e:
+                        logger.error(f"❌ Error parsing premium_until for {user_id}: {e}")
+
+        logger.info("✅ Premium reminders check completed.")
+    except Exception as e:
+        logger.error(f"❌ Error in send_premium_reminders: {e}")
