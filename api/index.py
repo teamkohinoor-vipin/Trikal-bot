@@ -17,19 +17,17 @@ if not BOT_TOKEN:
     raise Exception("BOT_TOKEN missing")
 
 bot = Bot(token=BOT_TOKEN)
-dispatcher = Dispatcher(bot, None, workers=1)
 
-# 🔥 JobQueue for auto-delete
+# Create dispatcher with job_queue
+dispatcher = Dispatcher(bot, None, workers=4)
+
+# 🔥 JobQueue for auto-delete - MUST be started before adding handlers
 job_queue = JobQueue()
 job_queue.set_dispatcher(dispatcher)
 dispatcher.job_queue = job_queue
 job_queue.start()
 
-# ---------- Premium Reminder Scheduler using JobQueue ----------
-# IST = UTC + 5:30
-# 12:00 AM IST = 6:30 PM UTC (previous day)
-# 9:00 AM IST = 3:30 AM UTC
-
+# ---------- Premium Reminder Scheduler ----------
 def schedule_daily_reminders():
     """Schedule 2 daily premium reminders at 12:00 AM IST and 9:00 AM IST."""
     now = datetime.now()
@@ -78,10 +76,8 @@ def run_daily_reminder(context):
         reminder_type = context.job.context.get('reminder_type', 'morning')
         
         if reminder_type == 'midnight':
-            # Next at 12:00 AM IST = 6:30 PM UTC
             next_time = now.replace(hour=18, minute=30, second=0, microsecond=0)
         else:
-            # Next at 9:00 AM IST = 3:30 AM UTC
             next_time = now.replace(hour=3, minute=30, second=0, microsecond=0)
         
         if now >= next_time:
