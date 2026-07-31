@@ -23,7 +23,7 @@ CHANNEL_2_INVITE_LINK = os.getenv("CHANNEL_2_INVITE_LINK", "https://t.me/+EnHwtM
 REQUIRED_CHANNEL_2_ID = int(os.getenv("REQUIRED_CHANNEL_2_ID", "-1003227457437"))
 
 # ---------- Phone API ----------
-PHONE_API_NEW = os.getenv("PHONE_API_NEW", "https://your-phone-api.com/search?number={num}")  # Change to your real API
+PHONE_API_NEW = os.getenv("PHONE_API_NEW", "https://numinfo-1m.hcjffjggjf.workers.dev/?number={num}")
 
 # ---------- MongoDB ----------
 MONGO_URI = os.getenv("MONGO_URI", "your_mongodb_uri_here")
@@ -43,3 +43,10 @@ DEFAULT_AUTO_DELETE_TIME = 60
 
 if not ADMIN_IDS:
     ADMIN_IDS = [8262107211]
+
+# ---------- Premium Reminder Settings ----------
+# Pehla reminder kitne din pahle bhejna hai (e.g., 2 = 2 din pahle)
+PREMIUM_REMINDER_START_DAYS = 2
+
+# Akhri reminder kitne din pahle bhejna hai (e.g., 1 = 1 din pahle)
+PREMIUM_REMINDER_END_DAYS = 1
