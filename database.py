@@ -19,7 +19,8 @@ daily_limit = db["daily_limit"]
 auto_delete_time = db["auto_delete_time"]
 maintenance_mode = db["maintenance_mode"]
 user_history = db["user_history"]
-settings = db["settings"]  # New collection for toggles
+settings = db["settings"]
+reminder_log = db["reminder_log"]  # optional, but we use reminders_sent field in user document
 
 # Initialise config documents
 def init_config():
@@ -33,7 +34,6 @@ def init_config():
         auto_delete_time.insert_one({"seconds": 60})
     if maintenance_mode.count_documents({}) == 0:
         maintenance_mode.insert_one({"active": False})
-    # Public protection default ON
     if settings.count_documents({"_id": "public_protection"}) == 0:
         settings.insert_one({"_id": "public_protection", "enabled": True})
 
@@ -70,7 +70,8 @@ def create_user(user_id, referred_by=None):
         "last_search_date": datetime.now().strftime("%Y-%m-%d"),
         "redeemed_codes": [],
         "last_redeem_timestamp": 0,
-        "premium_until": None
+        "premium_until": None,
+        "reminders_sent": []   # stores day counts for which reminders have been sent (e.g., [2,1])
     }
     users.insert_one(user)
     if referred_by:
@@ -89,12 +90,12 @@ def update_credits(user_id, delta):
 def set_premium_until(user_id, days=None):
     if days:
         until = (datetime.now() + timedelta(days=days)).isoformat()
-        users.update_one({"_id": user_id}, {"$set": {"premium_until": until}})
+        users.update_one({"_id": user_id}, {"$set": {"premium_until": until, "reminders_sent": []}})
     else:
-        users.update_one({"_id": user_id}, {"$set": {"premium_until": None}})
+        users.update_one({"_id": user_id}, {"$set": {"premium_until": None, "reminders_sent": []}})
 
 def remove_premium(user_id):
-    users.update_one({"_id": user_id}, {"$set": {"premium_until": None}})
+    users.update_one({"_id": user_id}, {"$set": {"premium_until": None, "reminders_sent": []}})
 
 def get_daily_data(user_id):
     user = get_user(user_id)
@@ -188,19 +189,10 @@ def is_number_protected(number):
     return protected_numbers.find_one({"_id": number}) is not None
 
 def protect_number(number, user_id, message=None, first_name=None, username=None):
-    """
-    Protect a number for a user. Stores user_id, first_name (display name), 
-    telegram username (optional), timestamp, and optional custom message.
-    Returns True if protected, False if already protected.
-    """
     if is_number_protected(number):
         return False
-    
-    # Use provided first_name, else fallback to "Unknown"
     display_name = first_name or "Unknown"
-    # Use provided username (telegram @) or fallback to None
     tg_username = username or None
-    
     protected_numbers.insert_one({
         "_id": number,
         "user_id": user_id,
@@ -213,21 +205,14 @@ def protect_number(number, user_id, message=None, first_name=None, username=None
     return True
 
 def unprotect_number(number, user_id=None):
-    """
-    Unprotect a number. If user_id is provided, only allow if the protector is same user or admin.
-    Returns True if deleted, False if not found or not authorized.
-    """
     doc = protected_numbers.find_one({"_id": number})
     if not doc:
         return False
-    # If user_id provided, check if user is the protector or an admin
     if user_id:
-        # Check if user is admin (from config or admins collection)
         if is_admin(user_id):
-            # Admin can delete any
             pass
         elif doc.get("user_id") != user_id:
-            return False  # Not authorized
+            return False
     result = protected_numbers.delete_one({"_id": number})
     if result.deleted_count > 0:
         log_user_action(user_id or "system", "Unprotected Number", number)
@@ -235,16 +220,43 @@ def unprotect_number(number, user_id=None):
     return False
 
 def get_all_protected_numbers():
-    """Returns list of all protected numbers (old format, without user info) - kept for backward compatibility."""
     return list(protected_numbers.find())
 
 def get_all_protected_numbers_with_user_info():
-    """Returns list of all protected numbers with user info (user_id, display_name, username, timestamp)."""
     return list(protected_numbers.find())
 
 def get_user_protected_numbers(user_id):
-    """Returns list of numbers protected by a specific user."""
     return list(protected_numbers.find({"user_id": user_id}))
+
+# ---------- Premium Reminder Functions ----------
+def get_users_expiring_in_days(day_threshold):
+    """
+    Returns list of users whose premium expires in exactly 'day_threshold' days.
+    Example: day_threshold=2 returns users expiring in 2 days.
+    """
+    now = datetime.now()
+    target_day_start = (now + timedelta(days=day_threshold)).replace(hour=0, minute=0, second=0, microsecond=0)
+    target_day_end = (now + timedelta(days=day_threshold)).replace(hour=23, minute=59, second=59, microsecond=999999)
+
+    users_list = list(users.find({
+        "premium_until": {"$ne": None},
+        "premium_until": {"$gte": target_day_start.isoformat(), "$lte": target_day_end.isoformat()}
+    }))
+    return users_list
+
+def mark_reminder_sent(user_id, day_count):
+    """Mark that a reminder was sent for this user at this day count."""
+    users.update_one(
+        {"_id": user_id},
+        {"$addToSet": {"reminders_sent": day_count}}
+    )
+
+def get_reminder_sent_days(user_id):
+    """Get which day reminders have been sent for this user."""
+    user = get_user(user_id)
+    if not user:
+        return []
+    return user.get("reminders_sent", [])
 
 # ---------- Redeem codes ----------
 def generate_redeem_code(credits, uses, created_by):
