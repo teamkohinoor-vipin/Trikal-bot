@@ -24,7 +24,8 @@ def is_premium(user_id):
 
 def can_use_daily_free(user_id):
     daily_count, _ = get_daily_data(user_id)
-    return daily_count < get_daily_free_limit()
+    limit = get_daily_free_limit(user_id)
+    return daily_count < limit
 
 def deduct_credits(user_id, chat_id=None):
     if chat_id == OFFICIAL_GROUP_ID:
@@ -50,11 +51,31 @@ def get_info_footer(user_id, chat_id=None):
         return "\n\n🌍 <b>Global Free Mode ACTIVE!</b>"
     if is_free_mode_active():
         return "\n\n✨ <b>Free Mode ACTIVE!</b>"
+    
     user = get_user(user_id)
-    credits = user["credits"] if user else 0
-    if is_admin(user_id):
-        return f"\n\n💰 Credits Remaining: <b>{credits}</b> | 👑 Admin User"
-    return f"\n\n💰 Credits Remaining: <b>{credits}</b>"
+    if not user:
+        return "\n\n💰 Credits: 0\n📊 Referrals: 0\n🎁 Daily free used: 0/0"
+    
+    credits = user.get("credits", 0)
+    referral_count = user.get("referral_count", 0)
+    daily_used, _ = get_daily_data(user_id)
+    daily_limit = get_daily_free_limit(user_id)
+    
+    # Check if user is on first day
+    created_at = user.get("created_at")
+    is_first_day = False
+    if created_at:
+        today = datetime.now().date()
+        if created_at.date() == today:
+            is_first_day = True
+    
+    if is_first_day:
+        daily_text = "Daily free search will provide you Tomorrow."
+    else:
+        daily_text = f"{daily_used}/{daily_limit}"
+    
+    footer = f"\n\n💰 Credits: {credits}\n📊 Referrals: {referral_count}\n🎁 Daily free used: {daily_text}"
+    return footer
 
 def check_membership(user_id, channel_id, context):
     try:
@@ -86,12 +107,10 @@ def check_and_require_subscription(update, context, user_id):
         return False
     return True
 
-# ---------- Admin Notification Helper (only for private messages) ----------
+# ---------- Admin Notification Helper ----------
 def notify_admins_new_user(context, user):
-    """Send a private notification to all admins (owner + sub‑admins) about a new user."""
     from config import ADMIN_IDS
     admin_ids = set(ADMIN_IDS)
-    # Add sub-admins from DB
     for doc in admins.find():
         admin_ids.add(doc["_id"])
     
@@ -116,7 +135,7 @@ def notify_admins_new_user(context, user):
         except Exception as e:
             logger.error(f"❌ Failed to notify admin {admin_id}: {e}")
 
-# ---------- Search Log (to log channel) ----------
+# ---------- Search Log ----------
 def log_search_to_channel(context, user, search_type, query, result="", success=True, chat_id=None):
     try:
         user_name = escape(user.first_name or "Unknown")
@@ -163,7 +182,6 @@ def broadcast_message(context, message):
             fail += 1
     return success, fail
 
-# ---------- delete_message (fixed) ----------
 def delete_message(context):
     job = context.job
     try:
@@ -257,11 +275,15 @@ def start(update: Update, context: CallbackContext):
                 context.bot.send_message(chat_id=referrer_id,
                     text=f"🎉 New referral! {user.first_name} joined.\nYou received {REFERRAL_CREDITS} credits.\nTotal referrals: {referrer['referral_count']}")
         
-        # Only notify admins privately (no log channel notification)
         notify_admins_new_user(context, user)
 
-    daily_limit = get_daily_free_limit()
-    text = f"<b>🎉 Welcome, {user.first_name}!</b>\n\n🔍 India Number Lookup\n💰 {daily_limit} free searches daily\n🔗 Referrals: 5 credits each, premium at {REFERRAL_TIER_1_COUNT}, unlimited at {REFERRAL_TIER_2_COUNT}\n\nUse buttons below."
+    daily_limit = get_daily_free_limit(user.id)
+    if daily_limit == 0:
+        daily_text = "No daily free on first day (use credits)"
+    else:
+        daily_text = f"{daily_limit} free searches daily"
+    
+    text = f"<b>🎉 Welcome, {user.first_name}!</b>\n\n🔍 India Number Lookup\n💰 {daily_text}\n🔗 Referrals: 5 credits each, premium at {REFERRAL_TIER_1_COUNT}, unlimited at {REFERRAL_TIER_2_COUNT}\n\nUse buttons below."
     update.message.reply_text(text, reply_markup=get_main_keyboard(user.id), parse_mode=ParseMode.HTML)
 
 def help_command(update: Update, context: CallbackContext):
@@ -333,7 +355,7 @@ def perform_phone_lookup(update, context, phone, raw):
 
     result = f"🔍 <b>Phone Lookup Results for {phone}</b>\n\n"
 
-    # ---------- DYNAMIC FIELD DISPLAY (with exclusion filter) ----------
+    # ---------- DYNAMIC FIELD DISPLAY ----------
     FIELD_LABELS = {
         'name': '👤 Name',
         'father_name': '👨‍👦 Father',
@@ -387,7 +409,6 @@ def perform_phone_lookup(update, context, phone, raw):
     ]
     msg.edit_text(result, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(keyboard))
 
-    # ---------- AUTO-DELETE (fixed) ----------
     if auto_del > 0 and context.job_queue:
         context.job_queue.run_once(
             delete_message,
@@ -428,7 +449,6 @@ def button_handler(update: Update, context: CallbackContext):
             query.edit_message_text("✅ Verified! You can use the bot.")
             if not get_user(user.id):
                 create_user(user.id)
-                # Only notify admins privately (no log channel notification)
                 notify_admins_new_user(context, user)
         else:
             query.edit_message_text("❌ Not subscribed to both channels.")
@@ -470,7 +490,7 @@ def handle_message(update: Update, context: CallbackContext):
         update.message.reply_text(f"✅ {credits} credits added!" if credits else "❌ Invalid code.", reply_markup=get_main_keyboard(user.id))
         return
 
-    # Handle protect state (user entering number and optional message)
+    # Handle protect state
     if context.user_data.get('state') == 'awaiting_protect_number':
         context.user_data['state'] = None
         parts = text.split(maxsplit=1)
@@ -490,7 +510,7 @@ def handle_message(update: Update, context: CallbackContext):
             update.message.reply_text(f"❌ Number {norm} is already protected.", reply_markup=get_main_keyboard(user.id))
         return
 
-    # Handle unprotect state (user sending number)
+    # Handle unprotect state
     if context.user_data.get('state') == 'awaiting_unprotect_number':
         context.user_data['state'] = None
         number = text.strip()
@@ -529,19 +549,34 @@ def handle_message(update: Update, context: CallbackContext):
         context.user_data['menu_level'] = 'main'
         update.message.reply_text("Main menu", reply_markup=get_main_keyboard(user.id))
 
-# ---------- Menu Handlers (unchanged) ----------
+# ---------- Menu Handlers ----------
 def handle_main_menu(update, context, text):
     user = update.effective_user
     if text == "India Number 🇮🇳":
         context.user_data['state'] = 'awaiting_search'
         update.message.reply_text("🔍 Send 10-digit Indian mobile number:", reply_markup=get_main_keyboard(user.id))
     elif text == "Check Credit 💰":
+        # Use the same format as footer
         user_data = get_user(user.id)
         credits = user_data["credits"] if user_data else 0
-        ref_count = user_data["referral_count"] if user_data else 0
-        daily, _ = get_daily_data(user.id)
-        limit = get_daily_free_limit()
-        update.message.reply_text(f"💰 Credits: {credits}\n📊 Referrals: {ref_count}\n🎁 Daily free used: {daily}/{limit}", parse_mode=ParseMode.HTML, reply_markup=get_main_keyboard(user.id))
+        referral_count = user_data["referral_count"] if user_data else 0
+        daily_used, _ = get_daily_data(user.id)
+        daily_limit = get_daily_free_limit(user.id)
+        
+        created_at = user_data.get("created_at") if user_data else None
+        is_first_day = False
+        if created_at:
+            today = datetime.now().date()
+            if created_at.date() == today:
+                is_first_day = True
+        
+        if is_first_day:
+            daily_text = "Daily free search will provide you Tomorrow."
+        else:
+            daily_text = f"{daily_used}/{daily_limit}"
+        
+        msg = f"💰 Credits: {credits}\n📊 Referrals: {referral_count}\n🎁 Daily free used: {daily_text}"
+        update.message.reply_text(msg, parse_mode=ParseMode.HTML, reply_markup=get_main_keyboard(user.id))
     elif text == "Get Referral Link 🔗":
         bot_username = context.bot.get_me().username
         link = f"https://t.me/{bot_username}?start={user.id}"
@@ -568,6 +603,7 @@ def handle_main_menu(update, context, text):
         context.user_data['menu_level'] = 'admin'
         update.message.reply_text("👑 Admin Panel", reply_markup=get_admin_keyboard())
 
+# ---------- Protection Submenu ----------
 def handle_protection_menu(update, context, text):
     user = update.effective_user
     if text == "Back to Main 🔙":
@@ -595,6 +631,7 @@ def handle_protection_menu(update, context, text):
     else:
         update.message.reply_text("Please use the buttons below.", reply_markup=get_protection_keyboard())
 
+# ---------- Admin Menu ----------
 def handle_admin_menu(update, context, text):
     user = update.effective_user
     if text == "Back to Main 🔙":
