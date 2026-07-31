@@ -8,7 +8,7 @@ if not BOT_TOKEN:
     print("⚠️ WARNING: BOT_TOKEN not set. Bot will not work.")
 
 ADMIN_IDS = [int(id) for id in os.getenv("ADMIN_IDS", "").split(",") if id]
-SUPPORT_USERNAME = os.getenv("SUPPORT_USERNAME", "KHRsupportBot")
+SUPPORT_USERNAME = os.getenv("SUPPORT_USERNAME", "InfoHelpLineBot")
 REFERRAL_NOTIFICATION_GROUP = os.getenv("REFERRAL_NOTIFICATION_GROUP", "https://t.me/+tIwH7ctrekc1YThl")
 LOG_CHANNEL_ID = int(os.getenv("LOG_CHANNEL_ID", "-1003472844347"))
 
