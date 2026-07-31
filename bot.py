@@ -131,7 +131,7 @@ def get_main_keyboard(user_id):
         ["Check Credit 💰", "Get Referral Link 🔗"],
         ["Redeem Code 🎁", "Buy Premium & Credits 💎"],
         ["Support 👨‍💻", "Official Group 🚀"],
-        ["Privacy Policy 🔒", "Protection 🛡️"]   # <-- Privacy Policy and Protection side by side
+        ["Privacy Policy 🔒", "Protection 🛡️"]
     ]
     if is_admin(user_id):
         keyboard.append(["Admin Panel 👑"])
