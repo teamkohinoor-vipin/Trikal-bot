@@ -699,7 +699,7 @@ def handle_buy_menu(update, context, text):
         context.user_data['menu_level'] = 'main'
         update.message.reply_text("Main menu", reply_markup=get_main_keyboard(user.id))
     elif text == "Premium Plans ⭐":
-        update.message.reply_text("⭐ Premium Plans:\n1 Day - ₹35\n1 Week - ₹99\n1 Month - ₹299\nLifetime - ₹999\n\nContact @ll_VIPIN_ll or @Stampedk", parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Contact Support", url=f"https://t.me/{SUPPORT_USERNAME}")]]))
+        update.message.reply_text("⭐ Premium Plans:\n1 Week - ₹70\n15 Day's - ₹99\n1 Month - ₹199\nLifetime - ₹999\n\nContact @ll_VIPIN_ll or @Stampedk", parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Contact Support", url=f"https://t.me/{SUPPORT_USERNAME}")]]))
     elif text == "Credit Packages 💰":
         update.message.reply_text("💰 Credit Packages:\n10 Credits - ₹15\n27 Credits - ₹35\n55 Credits - ₹65\n115 Credits - ₹110\n250 Credits - ₹200\n\nContact @ll_VIPIN_ll or @Stampedk", parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Contact Support", url=f"https://t.me/{SUPPORT_USERNAME}")]]))
 
