@@ -7,6 +7,13 @@ from telegram.ext import Dispatcher, CommandHandler, CallbackQueryHandler, Messa
 from bot import *
 from config import BOT_TOKEN
 
+# ---------- APScheduler for daily premium reminders ----------
+from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.cron import CronTrigger
+import logging
+
+logger = logging.getLogger(__name__)
+
 app = Flask(__name__)
 
 if not BOT_TOKEN:
@@ -52,6 +59,23 @@ def webhook():
     except Exception as e:
         print(f"Webhook error: {e}")
         return "ERROR", 500
+
+# ---------- Scheduler Setup ----------
+def start_scheduler():
+    """Start the background scheduler for daily premium reminders."""
+    scheduler = BackgroundScheduler()
+    # Schedule to run every day at 09:00 UTC
+    scheduler.add_job(
+        func=lambda: send_premium_reminders(bot),
+        trigger=CronTrigger(hour=9, minute=0),  # 9 AM UTC daily
+        id="premium_reminder_job",
+        replace_existing=True
+    )
+    scheduler.start()
+    logger.info("✅ Premium reminder scheduler started (daily at 09:00 UTC).")
+
+# Start scheduler when the app loads
+start_scheduler()
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
