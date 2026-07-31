@@ -44,15 +44,14 @@ def create_search_result_file(result_text, query, search_type, bot_username):
     f.name = create_safe_filename(query, search_type, bot_username)
     return f
 
-# ---------- FIXED fetch_phone_info for new API ----------
+# ---------- UPDATED fetch_phone_info for new API ----------
 def fetch_phone_info(phone_number):
     """
     Fetch phone details from new API.
     Returns a list of subscriber dicts (empty if no data or error).
     """
-    url = PHONE_API_NEW.format(num=phone_number)  # expects {num} in config
+    url = PHONE_API_NEW.format(num=phone_number)
     try:
-        # 🔥 Reduced timeout to 5 seconds – prevents worker timeout
         resp = requests.get(url, timeout=5)
         if resp.status_code != 200:
             logger.warning(f"API returned {resp.status_code}")
@@ -60,22 +59,47 @@ def fetch_phone_info(phone_number):
 
         data = resp.json()
 
-        # ---- Handle new API format ----
+        # ========== NEW API FORMAT (status: true, result: { results: [...] }) ==========
+        if data.get('status') is True and 'result' in data:
+            result = data.get('result', {})
+            results = result.get('results', [])
+            if results and isinstance(results, list):
+                normalized = []
+                # Field mapping: API field -> our display field
+                field_map = {
+                    'name': 'name',
+                    'fname': 'father_name',
+                    'address': 'address',
+                    'mobile': 'mobile',
+                    'alt': 'alternate_number',
+                    'circle': 'circle',
+                    'id': 'id',
+                    'email': 'email'
+                }
+                for rec in results:
+                    new_rec = {}
+                    for api_key, our_key in field_map.items():
+                        if api_key in rec and rec[api_key]:
+                            # Handle None or empty strings
+                            value = rec[api_key]
+                            if value is not None and str(value).strip():
+                                new_rec[our_key] = str(value)
+                    if new_rec:
+                        normalized.append(new_rec)
+                return normalized
+
+        # ========== OLD API FORMAT (for backward compatibility) ==========
         if data.get('status') == 'success' and 'data' in data:
             subscriber = data['data'].get('subscriber')
             if subscriber and isinstance(subscriber, dict):
-                # Return as a list (compatible with old code)
                 return [subscriber]
 
-        # ---- Fallback for old format or other structures ----
-        # If direct list
+        # Fallback: if direct list or 'records' key
         if isinstance(data, list):
             return data
-        # If 'records' key exists
         if isinstance(data, dict) and 'records' in data:
             return data['records']
 
-        # No data found
         return []
 
     except requests.exceptions.Timeout:
