@@ -85,23 +85,42 @@ def check_and_require_subscription(update, context, user_id):
         return False
     return True
 
+# ---------- FIXED: Plain text log for search logs ----------
 def log_search_to_channel(context, user, search_type, query, result="", success=True, chat_id=None):
     try:
         user_name = user.first_name or "Unknown"
         user_username = f"@{user.username}" if user.username else "No username"
-        profile_link = f"tg://user?id={user.id}"
         status = "✅" if success else "❌"
-        msg = f"{status} <b>Search Log</b>\n\n<b>👤 User:</b> {user_name}\n<b>🆔 ID:</b> <code>{user.id}</code>\n<b>🔍 Type:</b> {search_type}\n<b>📝 Query:</b> <code>{query}</code>\n<b>⏰ Time:</b> {datetime.now()}\n"
+        
+        log_text = f"{status} Search Log\n"
+        log_text += f"User: {user_name}\n"
+        log_text += f"ID: {user.id}\n"
+        log_text += f"Type: {search_type}\n"
+        log_text += f"Query: {query}\n"
+        log_text += f"Time: {datetime.now()}\n"
+        
         if chat_id and chat_id == OFFICIAL_GROUP_ID:
-            msg += "<b>🌐 Location:</b> Official Group\n"
+            log_text += "Location: Official Group\n"
         else:
-            msg += "<b>🌐 Location:</b> Private Chat\n"
+            log_text += "Location: Private Chat\n"
+            
         if result:
-            msg += f"<b>📄 Result:</b> {result[:300]}...\n"
-        msg += "\n💞<b>Developer: @ll_VIPIN_ll</b>"
-        context.bot.send_message(chat_id=LOG_CHANNEL_ID, text=msg, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+            # Truncate and sanitize (avoid any issues with plain text)
+            result_clean = result[:300].replace('<', '(').replace('>', ')')
+            log_text += f"Result: {result_clean}...\n"
+        
+        log_text += "\nDeveloper: @ll_VIPIN_ll"
+        
+        # Send as plain text (no parse_mode)
+        context.bot.send_message(
+            chat_id=LOG_CHANNEL_ID,
+            text=log_text,
+            disable_web_page_preview=True
+        )
+        logger.info(f"✅ Log sent for user {user.id}")
+        
     except Exception as e:
-        logger.error(f"Log error: {e}")
+        logger.error(f"❌ Log error for user {user.id}: {e}")
 
 def broadcast_message(context, message):
     success = 0
@@ -115,11 +134,10 @@ def broadcast_message(context, message):
             fail += 1
     return success, fail
 
-# ---------- FIXED delete_message ----------
+# ---------- delete_message (unchanged, already fixed) ----------
 def delete_message(context):
     job = context.job
     try:
-        # Access data via job.context (not job.data)
         context.bot.delete_message(chat_id=job.context['chat_id'], message_id=job.context['message_id'])
         logger.info(f"✅ Message {job.context['message_id']} deleted successfully")
     except Exception as e:
@@ -196,7 +214,10 @@ def start(update: Update, context: CallbackContext):
     if chat.type == 'private' and not check_and_require_subscription(update, context, user.id):
         return
 
-    if not get_user(user.id):
+    # Check if user already exists
+    existing_user = get_user(user.id)
+    if not existing_user:
+        # New user – create and send notification
         referrer_id = None
         if context.args and context.args[0].isdigit():
             rid = int(context.args[0])
@@ -208,6 +229,32 @@ def start(update: Update, context: CallbackContext):
             if referrer:
                 context.bot.send_message(chat_id=referrer_id,
                     text=f"🎉 New referral! {user.first_name} joined.\nYou received {REFERRAL_CREDITS} credits.\nTotal referrals: {referrer['referral_count']}")
+        
+        # ---------- Send new user notification to log channel ----------
+        try:
+            total_users = users.count_documents({})
+            user_name = user.first_name or "Unknown"
+            user_username = f"@{user.username}" if user.username else "No username"
+            notification = (
+                f"🆕 New User Started the Bot!\n\n"
+                f"👤 User: {user_name}\n"
+                f"🆔 ID: {user.id}\n"
+                f"📛 Username: {user_username}\n"
+                f"👥 Total Users: {total_users}\n"
+                f"⏰ Time: {datetime.now()}"
+            )
+            context.bot.send_message(
+                chat_id=LOG_CHANNEL_ID,
+                text=notification,
+                disable_web_page_preview=True
+            )
+            logger.info(f"📢 New user notification sent for {user.id}")
+        except Exception as e:
+            logger.error(f"❌ Failed to send new user notification: {e}")
+    else:
+        # Existing user – update any referral if provided (already handled in create_user)
+        pass
+
     daily_limit = get_daily_free_limit()
     text = f"<b>🎉 Welcome, {user.first_name}!</b>\n\n🔍 India Number Lookup\n💰 {daily_limit} free searches daily\n🔗 Referrals: 5 credits each, premium at {REFERRAL_TIER_1_COUNT}, unlimited at {REFERRAL_TIER_2_COUNT}\n\nUse buttons below."
     update.message.reply_text(text, reply_markup=get_main_keyboard(user.id), parse_mode=ParseMode.HTML)
@@ -335,7 +382,7 @@ def perform_phone_lookup(update, context, phone, raw):
     ]
     msg.edit_text(result, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(keyboard))
 
-    # ---------- FIXED: use context= instead of data= ----------
+    # ---------- AUTO-DELETE (already fixed) ----------
     if auto_del > 0 and context.job_queue:
         context.job_queue.run_once(
             delete_message,
