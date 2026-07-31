@@ -20,7 +20,7 @@ auto_delete_time = db["auto_delete_time"]
 maintenance_mode = db["maintenance_mode"]
 user_history = db["user_history"]
 settings = db["settings"]
-reminder_log = db["reminder_log"]  # optional, but we use reminders_sent field in user document
+reminder_log = db["reminder_log"]  # optional
 
 # Initialise config documents
 def init_config():
@@ -71,7 +71,8 @@ def create_user(user_id, referred_by=None):
         "redeemed_codes": [],
         "last_redeem_timestamp": 0,
         "premium_until": None,
-        "reminders_sent": []   # stores day counts for which reminders have been sent (e.g., [2,1])
+        "reminders_sent": [],
+        "created_at": datetime.now()   # <-- Added: user creation timestamp
     }
     users.insert_one(user)
     if referred_by:
@@ -170,9 +171,32 @@ def set_maintenance_mode(active):
 def is_maintenance_mode_active():
     return maintenance_mode.find_one().get("active", False)
 
-def get_daily_free_limit():
+def get_daily_free_limit(user_id=None):
+    """
+    Returns daily free limit for a user.
+    If user is on their first day (created_at date == today), limit is 0.
+    Otherwise, returns the default limit from config (3).
+    """
+    default_limit = 3
     doc = daily_limit.find_one()
-    return doc.get("limit", 3) if doc else 3
+    if doc:
+        default_limit = doc.get("limit", 3)
+    
+    if user_id is None:
+        return default_limit
+    
+    user = get_user(user_id)
+    if not user:
+        return default_limit
+    
+    created_at = user.get("created_at")
+    if created_at:
+        today = datetime.now().date()
+        if created_at.date() == today:
+            # First day: no daily free searches
+            return 0
+    
+    return default_limit
 
 def set_daily_free_limit(limit):
     daily_limit.update_one({}, {"$set": {"limit": limit}})
@@ -230,14 +254,9 @@ def get_user_protected_numbers(user_id):
 
 # ---------- Premium Reminder Functions ----------
 def get_users_expiring_in_days(day_threshold):
-    """
-    Returns list of users whose premium expires in exactly 'day_threshold' days.
-    Example: day_threshold=2 returns users expiring in 2 days.
-    """
     now = datetime.now()
     target_day_start = (now + timedelta(days=day_threshold)).replace(hour=0, minute=0, second=0, microsecond=0)
     target_day_end = (now + timedelta(days=day_threshold)).replace(hour=23, minute=59, second=59, microsecond=999999)
-
     users_list = list(users.find({
         "premium_until": {"$ne": None},
         "premium_until": {"$gte": target_day_start.isoformat(), "$lte": target_day_end.isoformat()}
@@ -245,14 +264,12 @@ def get_users_expiring_in_days(day_threshold):
     return users_list
 
 def mark_reminder_sent(user_id, day_count):
-    """Mark that a reminder was sent for this user at this day count."""
     users.update_one(
         {"_id": user_id},
         {"$addToSet": {"reminders_sent": day_count}}
     )
 
 def get_reminder_sent_days(user_id):
-    """Get which day reminders have been sent for this user."""
     user = get_user(user_id)
     if not user:
         return []
