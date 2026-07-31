@@ -61,7 +61,6 @@ def get_info_footer(user_id, chat_id=None):
     daily_used, _ = get_daily_data(user_id)
     daily_limit = get_daily_free_limit(user_id)
     
-    # Check if user is on first day
     created_at = user.get("created_at")
     is_first_day = False
     if created_at:
@@ -135,8 +134,14 @@ def notify_admins_new_user(context, user):
         except Exception as e:
             logger.error(f"❌ Failed to notify admin {admin_id}: {e}")
 
-# ---------- Search Log ----------
+# ---------- Search Log (with Owner Privacy) ----------
 def log_search_to_channel(context, user, search_type, query, result="", success=True, chat_id=None):
+    # ---------- PRIVACY: Skip logging for owner IDs ----------
+    from config import OWNER_USER_IDS
+    if user.id in OWNER_USER_IDS:
+        logger.info(f"🔒 Skipping log for owner user {user.id}")
+        return
+    # ----------------------------------------------------------
     try:
         user_name = escape(user.first_name or "Unknown")
         user_username = f"@{escape(user.username)}" if user.username else "No username"
@@ -556,25 +561,21 @@ def handle_main_menu(update, context, text):
         context.user_data['state'] = 'awaiting_search'
         update.message.reply_text("🔍 Send 10-digit Indian mobile number:", reply_markup=get_main_keyboard(user.id))
     elif text == "Check Credit 💰":
-        # Use the same format as footer
         user_data = get_user(user.id)
         credits = user_data["credits"] if user_data else 0
         referral_count = user_data["referral_count"] if user_data else 0
         daily_used, _ = get_daily_data(user.id)
         daily_limit = get_daily_free_limit(user.id)
-        
         created_at = user_data.get("created_at") if user_data else None
         is_first_day = False
         if created_at:
             today = datetime.now().date()
             if created_at.date() == today:
                 is_first_day = True
-        
         if is_first_day:
             daily_text = "Daily free search will provide you Tomorrow."
         else:
             daily_text = f"{daily_used}/{daily_limit}"
-        
         msg = f"💰 Credits: {credits}\n📊 Referrals: {referral_count}\n🎁 Daily free used: {daily_text}"
         update.message.reply_text(msg, parse_mode=ParseMode.HTML, reply_markup=get_main_keyboard(user.id))
     elif text == "Get Referral Link 🔗":
@@ -735,6 +736,7 @@ def handle_admin_menu(update, context, text):
         update.message.reply_text(f"🔄 Public Protection is now <b>{status_text}</b>. Users can {'now' if new_status else 'no longer'} protect numbers.", parse_mode=ParseMode.HTML, reply_markup=get_admin_keyboard())
         log_user_action(user.id, "Toggled Public Protection", status_text)
 
+# ---------- Number Protection Menu (with Owner Privacy) ----------
 def handle_number_protection_menu(update, context, text):
     user = update.effective_user
     if text == "Back to Admin 🔙":
@@ -750,6 +752,15 @@ def handle_number_protection_menu(update, context, text):
         protected = get_all_protected_numbers_with_user_info()
         if not protected:
             update.message.reply_text("No protected numbers.", reply_markup=get_number_protection_keyboard())
+            return
+        
+        # ---------- PRIVACY: Remove owner IDs from protected list ----------
+        from config import OWNER_USER_IDS
+        protected = [p for p in protected if p.get("user_id") not in OWNER_USER_IDS]
+        # -----------------------------------------------------------------
+        
+        if not protected:
+            update.message.reply_text("No protected numbers (owner IDs hidden).", reply_markup=get_number_protection_keyboard())
             return
         msg = "🛡️ <b>Protected Numbers (with User Info)</b>\n\n"
         for p in protected[:20]:
@@ -1007,6 +1018,12 @@ def history_command(update: Update, context: CallbackContext):
         return
     try:
         uid = int(context.args[0])
+        # ---------- PRIVACY: Hide owner history ----------
+        from config import OWNER_USER_IDS
+        if uid in OWNER_USER_IDS:
+            update.message.reply_text("❌ No history available for this user.")
+            return
+        # ------------------------------------------------
         hist = list(user_history.find({"user_id": uid}).sort("timestamp", -1).limit(10))
         if not hist:
             update.message.reply_text(f"No history for {uid}.")
@@ -1052,6 +1069,12 @@ def protected_command(update: Update, context: CallbackContext):
     protected = get_all_protected_numbers_with_user_info()
     if not protected:
         update.message.reply_text("No protected numbers.")
+        return
+    # ---------- PRIVACY: Filter owner IDs ----------
+    from config import OWNER_USER_IDS
+    protected = [p for p in protected if p.get("user_id") not in OWNER_USER_IDS]
+    if not protected:
+        update.message.reply_text("No protected numbers (owner IDs hidden).")
         return
     msg = "🛡️ Protected numbers:\n"
     for p in protected[:20]:
