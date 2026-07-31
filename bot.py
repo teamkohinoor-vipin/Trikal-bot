@@ -753,7 +753,7 @@ def handle_admin_action(update, context, text):
             uid = int(parts[0])
             days = int(parts[1]) if len(parts) > 1 else None
             set_premium_until(uid, days)
-            context.bot.send_message(chat_id=uid, text=f"⭐ Admin granted you premium {'for '+str(days)+' days' if days else 'permanently'}!", parse_mode=ParseMode.HTML)
+            context.bot.send_message(chat_id=uid, text=f"🎉🎊 Congratulations! you got premium {'for '+str(days)+' days' if days else 'permanently'}!", parse_mode=ParseMode.HTML)
             update.message.reply_text(f"✅ Premium added to {uid}", reply_markup=get_admin_keyboard())
             log_user_action(user.id, "Added Premium", f"To: {uid}, Days: {days}")
         except:
