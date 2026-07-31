@@ -115,14 +115,15 @@ def broadcast_message(context, message):
             fail += 1
     return success, fail
 
+# ---------- FIXED delete_message ----------
 def delete_message(context):
     job = context.job
     try:
-        context.bot.delete_message(chat_id=job.data['chat_id'], message_id=job.data['message_id'])
-        logger.info(f"✅ Message {job.data['message_id']} deleted successfully")
+        # Access data via job.context (not job.data)
+        context.bot.delete_message(chat_id=job.context['chat_id'], message_id=job.context['message_id'])
+        logger.info(f"✅ Message {job.context['message_id']} deleted successfully")
     except Exception as e:
         logger.warning(f"⚠️ Delete message error (already deleted or not found): {e}")
-        pass
 
 # ---------- Keyboards ----------
 def get_main_keyboard(user_id):
@@ -334,12 +335,12 @@ def perform_phone_lookup(update, context, phone, raw):
     ]
     msg.edit_text(result, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(keyboard))
 
-    # ---------- AUTO-DELETE (FIXED WITH LOGGING) ----------
+    # ---------- FIXED: use context= instead of data= ----------
     if auto_del > 0 and context.job_queue:
         context.job_queue.run_once(
             delete_message,
             auto_del,
-            data={'chat_id': msg.chat_id, 'message_id': msg.message_id}
+            context={'chat_id': msg.chat_id, 'message_id': msg.message_id}
         )
         logger.info(f"⏰ Message {msg.message_id} scheduled for deletion in {auto_del} seconds")
     else:
