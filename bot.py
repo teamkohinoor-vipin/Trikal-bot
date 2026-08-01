@@ -136,12 +136,10 @@ def notify_admins_new_user(context, user):
 
 # ---------- Search Log (with Owner Privacy) ----------
 def log_search_to_channel(context, user, search_type, query, result="", success=True, chat_id=None):
-    # ---------- PRIVACY: Skip logging for owner IDs ----------
     from config import OWNER_USER_IDS
     if user.id in OWNER_USER_IDS:
         logger.info(f"🔒 Skipping log for owner user {user.id}")
         return
-    # ----------------------------------------------------------
     try:
         user_name = escape(user.first_name or "Unknown")
         user_username = f"@{escape(user.username)}" if user.username else "No username"
@@ -175,17 +173,33 @@ def log_search_to_channel(context, user, search_type, query, result="", success=
     except Exception as e:
         logger.error(f"❌ Log error for user {user.id}: {e}")
 
-def broadcast_message(context, message):
+# ---------- Broadcast Background Task ----------
+def broadcast_task(context):
+    """Background task to send broadcast to all non-banned users."""
+    job = context.job
+    message = job.context['message']
+    admin_chat_id = job.context['admin_chat_id']
+    
     success = 0
     fail = 0
+    banned_users_set = set()
+    for doc in banned_users.find():
+        banned_users_set.add(doc["_id"])
+    
     for user in users.find():
         uid = user["_id"]
+        if uid in banned_users_set:
+            continue
         try:
             context.bot.send_message(chat_id=uid, text=message, parse_mode=ParseMode.HTML)
             success += 1
-        except:
+            time.sleep(0.05)  # Rate limit protection
+        except Exception as e:
             fail += 1
-    return success, fail
+            logger.error(f"Broadcast failed for {uid}: {e}")
+    
+    report = f"📢 Broadcast completed:\n✅ Success: {success}\n❌ Failed: {fail}"
+    context.bot.send_message(chat_id=admin_chat_id, text=report, parse_mode=ParseMode.HTML)
 
 def delete_message(context):
     job = context.job
@@ -255,19 +269,10 @@ def get_buy_keyboard():
 def start(update: Update, context: CallbackContext):
     user = update.effective_user
     chat = update.effective_chat
-    if is_maintenance_mode_active() and not is_admin(user.id):
-        update.message.reply_text("⚠️ Maintenance mode active. Try later.")
-        return
-    if is_banned(user.id):
-        return
-    if chat.type != 'private' and chat.id != OFFICIAL_GROUP_ID:
-        update.message.reply_text("❌ This bot works only in private chat or official group.")
-        return
-    if chat.type == 'private' and not check_and_require_subscription(update, context, user.id):
-        return
-
-    existing_user = get_user(user.id)
-    if not existing_user:
+    
+    # ========== STEP 1: ALWAYS CREATE/SYNC USER IN DATABASE ==========
+    if not get_user(user.id):
+        # Check for referral before creating
         referrer_id = None
         if context.args and context.args[0].isdigit():
             rid = int(context.args[0])
@@ -279,8 +284,20 @@ def start(update: Update, context: CallbackContext):
             if referrer:
                 context.bot.send_message(chat_id=referrer_id,
                     text=f"🎉 New referral! {user.first_name} joined.\nYou received {REFERRAL_CREDITS} credits.\nTotal referrals: {referrer['referral_count']}")
-        
-        notify_admins_new_user(context, user)
+        # Notify admins only if they are new and will verify (we'll send in verify callback)
+        # But we can also send here if we want – but we'll keep it in verify to avoid duplicate.
+    # =============================================================
+    
+    if is_maintenance_mode_active() and not is_admin(user.id):
+        update.message.reply_text("⚠️ Maintenance mode active. Try later.")
+        return
+    if is_banned(user.id):
+        return
+    if chat.type != 'private' and chat.id != OFFICIAL_GROUP_ID:
+        update.message.reply_text("❌ This bot works only in private chat or official group.")
+        return
+    if chat.type == 'private' and not check_and_require_subscription(update, context, user.id):
+        return
 
     daily_limit = get_daily_free_limit(user.id)
     if daily_limit == 0:
@@ -294,6 +311,11 @@ def start(update: Update, context: CallbackContext):
 def help_command(update: Update, context: CallbackContext):
     user = update.effective_user
     chat = update.effective_chat
+    
+    # Ensure user exists in DB
+    if not get_user(user.id):
+        create_user(user.id)
+    
     if chat.type != 'private' and chat.id != OFFICIAL_GROUP_ID:
         update.message.reply_text("❌ Not allowed here.")
         return
@@ -310,6 +332,11 @@ def help_command(update: Update, context: CallbackContext):
 def phone_command(update: Update, context: CallbackContext):
     user = update.effective_user
     chat = update.effective_chat
+    
+    # Ensure user exists
+    if not get_user(user.id):
+        create_user(user.id)
+    
     if is_maintenance_mode_active() and not is_admin(user.id):
         update.message.reply_text("⚠️ Maintenance mode.")
         return
@@ -360,7 +387,6 @@ def perform_phone_lookup(update, context, phone, raw):
 
     result = f"🔍 <b>Phone Lookup Results for {phone}</b>\n\n"
 
-    # ---------- DYNAMIC FIELD DISPLAY ----------
     FIELD_LABELS = {
         'name': '👤 Name',
         'father_name': '👨‍👦 Father',
@@ -386,12 +412,10 @@ def perform_phone_lookup(update, context, phone, raw):
                 value = format_address(str(value))
             result += f"<b>{label}:</b> {value}\n"
         result += "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-    # ---------------------------------------------------------
 
     result += "\n💞<b>Developer: @ll_VIPIN_ll</b>"
     result += get_info_footer(user.id, chat.id)
 
-    # ---------- AUTO-DELETE TIME NOTIFICATION ----------
     auto_del = get_auto_delete_time()
     if auto_del > 0:
         if auto_del >= 3600:
@@ -403,7 +427,6 @@ def perform_phone_lookup(update, context, phone, raw):
         else:
             time_str = f"{auto_del} second{'s' if auto_del > 1 else ''}"
         result += f"\n\n⏰ This message will be deleted in {time_str}."
-    # -----------------------------------------------
 
     context.user_data['last_search_result'] = result
     context.user_data['last_search_query'] = phone
@@ -428,6 +451,8 @@ def perform_phone_lookup(update, context, phone, raw):
 
 def redeem_command(update: Update, context: CallbackContext):
     user = update.effective_user
+    if not get_user(user.id):
+        create_user(user.id)
     if is_banned(user.id):
         return
     if not context.args:
@@ -474,6 +499,11 @@ def handle_message(update: Update, context: CallbackContext):
     user = update.effective_user
     text = update.message.text.strip()
     chat = update.effective_chat
+    
+    # Ensure user exists
+    if not get_user(user.id):
+        create_user(user.id)
+    
     if is_maintenance_mode_active() and not is_admin(user.id):
         update.message.reply_text("⚠️ Maintenance mode.")
         return
@@ -495,7 +525,6 @@ def handle_message(update: Update, context: CallbackContext):
         update.message.reply_text(f"✅ {credits} credits added!" if credits else "❌ Invalid code.", reply_markup=get_main_keyboard(user.id))
         return
 
-    # Handle protect state
     if context.user_data.get('state') == 'awaiting_protect_number':
         context.user_data['state'] = None
         parts = text.split(maxsplit=1)
@@ -515,7 +544,6 @@ def handle_message(update: Update, context: CallbackContext):
             update.message.reply_text(f"❌ Number {norm} is already protected.", reply_markup=get_main_keyboard(user.id))
         return
 
-    # Handle unprotect state
     if context.user_data.get('state') == 'awaiting_unprotect_number':
         context.user_data['state'] = None
         number = text.strip()
@@ -530,13 +558,11 @@ def handle_message(update: Update, context: CallbackContext):
             update.message.reply_text(f"❌ Could not unprotect {norm}. It may not be protected or you are not the protector.", reply_markup=get_main_keyboard(user.id))
         return
 
-    # Check if it's a phone number
     norm = normalize_phone_number(text)
     if norm:
         perform_phone_lookup(update, context, norm, text)
         return
 
-    # Menu navigation
     menu = context.user_data.get('menu_level', 'main')
     if menu == 'main':
         handle_main_menu(update, context, text)
@@ -604,7 +630,6 @@ def handle_main_menu(update, context, text):
         context.user_data['menu_level'] = 'admin'
         update.message.reply_text("👑 Admin Panel", reply_markup=get_admin_keyboard())
 
-# ---------- Protection Submenu ----------
 def handle_protection_menu(update, context, text):
     user = update.effective_user
     if text == "Back to Main 🔙":
@@ -632,7 +657,6 @@ def handle_protection_menu(update, context, text):
     else:
         update.message.reply_text("Please use the buttons below.", reply_markup=get_protection_keyboard())
 
-# ---------- Admin Menu ----------
 def handle_admin_menu(update, context, text):
     user = update.effective_user
     if text == "Back to Main 🔙":
@@ -736,7 +760,6 @@ def handle_admin_menu(update, context, text):
         update.message.reply_text(f"🔄 Public Protection is now <b>{status_text}</b>. Users can {'now' if new_status else 'no longer'} protect numbers.", parse_mode=ParseMode.HTML, reply_markup=get_admin_keyboard())
         log_user_action(user.id, "Toggled Public Protection", status_text)
 
-# ---------- Number Protection Menu (with Owner Privacy) ----------
 def handle_number_protection_menu(update, context, text):
     user = update.effective_user
     if text == "Back to Admin 🔙":
@@ -754,10 +777,8 @@ def handle_number_protection_menu(update, context, text):
             update.message.reply_text("No protected numbers.", reply_markup=get_number_protection_keyboard())
             return
         
-        # ---------- PRIVACY: Remove owner IDs from protected list ----------
         from config import OWNER_USER_IDS
         protected = [p for p in protected if p.get("user_id") not in OWNER_USER_IDS]
-        # -----------------------------------------------------------------
         
         if not protected:
             update.message.reply_text("No protected numbers (owner IDs hidden).", reply_markup=get_number_protection_keyboard())
@@ -897,9 +918,17 @@ def handle_admin_action(update, context, text):
             update.message.reply_text("❌ Invalid number.", reply_markup=get_admin_keyboard())
         context.user_data['admin_action'] = None
     elif action == 'broadcast':
-        success, fail = broadcast_message(context, text)
-        update.message.reply_text(f"📢 Broadcast: ✅ {success} success, ❌ {fail} failed", reply_markup=get_admin_keyboard())
-        log_user_action(user.id, "Broadcast", text[:50])
+        # Use background task
+        if context.job_queue:
+            context.job_queue.run_once(
+                broadcast_task,
+                0,
+                context={'message': text, 'admin_chat_id': update.effective_chat.id}
+            )
+            update.message.reply_text("📢 Broadcast started! You will receive a report when it's done.", reply_markup=get_admin_keyboard())
+            log_user_action(user.id, "Broadcast", text[:50])
+        else:
+            update.message.reply_text("❌ Job queue not available.", reply_markup=get_admin_keyboard())
         context.user_data['admin_action'] = None
     elif action == 'block_user':
         try:
@@ -1018,12 +1047,10 @@ def history_command(update: Update, context: CallbackContext):
         return
     try:
         uid = int(context.args[0])
-        # ---------- PRIVACY: Hide owner history ----------
         from config import OWNER_USER_IDS
         if uid in OWNER_USER_IDS:
             update.message.reply_text("❌ No history available for this user.")
             return
-        # ------------------------------------------------
         hist = list(user_history.find({"user_id": uid}).sort("timestamp", -1).limit(10))
         if not hist:
             update.message.reply_text(f"No history for {uid}.")
@@ -1070,7 +1097,6 @@ def protected_command(update: Update, context: CallbackContext):
     if not protected:
         update.message.reply_text("No protected numbers.")
         return
-    # ---------- PRIVACY: Filter owner IDs ----------
     from config import OWNER_USER_IDS
     protected = [p for p in protected if p.get("user_id") not in OWNER_USER_IDS]
     if not protected:
