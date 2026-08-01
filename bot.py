@@ -197,16 +197,14 @@ def broadcast_task(context):
             success += 1
         except Exception as e:
             fail += 1
-            # If it's a flood error, wait and retry? (We'll just log and continue)
             if hasattr(e, 'retry_after'):
-                # telegram.error.RetryAfter has retry_after attribute
                 wait = e.retry_after
                 logger.warning(f"Rate limited for {uid}, waiting {wait}s")
                 time.sleep(wait)
                 try:
                     context.bot.send_message(chat_id=uid, text=message, parse_mode=ParseMode.HTML)
                     success += 1
-                    fail -= 1  # undo fail count
+                    fail -= 1
                 except:
                     pass
             else:
@@ -231,9 +229,8 @@ def delete_message(context):
     except Exception as e:
         logger.warning(f"⚠️ Delete message error (already deleted or not found): {e}")
 
-# ---------- Ensure User Exists (decorator-like helper) ----------
+# ---------- Ensure User Exists ----------
 def ensure_user(user_id):
-    """Create user if not exists."""
     if not get_user(user_id):
         create_user(user_id)
 
@@ -297,7 +294,7 @@ def get_buy_keyboard():
 def start(update: Update, context: CallbackContext):
     user = update.effective_user
     chat = update.effective_chat
-    ensure_user(user.id)  # Save if not exists
+    ensure_user(user.id)
     
     if is_maintenance_mode_active() and not is_admin(user.id):
         update.message.reply_text("⚠️ Maintenance mode active. Try later.")
@@ -495,7 +492,7 @@ def button_handler(update: Update, context: CallbackContext):
         context.bot.send_document(chat_id=query.message.chat_id, document=file, caption="✅ Download complete.")
         query.answer("File sent!")
 
-# ---------- Message Handler ----------
+# ---------- Message Handler (with smart menu fallback) ----------
 def handle_message(update: Update, context: CallbackContext):
     if not update.message or not update.message.text:
         return
@@ -515,6 +512,29 @@ def handle_message(update: Update, context: CallbackContext):
         return
     if chat.type == 'private' and not check_and_require_subscription(update, context, user.id):
         return
+
+    # ---- Smart Menu Fallback: If user is in a submenu but presses a main menu button ----
+    main_menu_buttons = [
+        "India Number 🇮🇳",
+        "Check Credit 💰",
+        "Get Referral Link 🔗",
+        "Redeem Code 🎁",
+        "Buy Premium & Credits 💎",
+        "Support 👨‍💻",
+        "Official Group 🚀",
+        "Privacy Policy 🔒",
+        "Protection 🛡️",
+        "Admin Panel 👑"
+    ]
+    current_menu = context.user_data.get('menu_level', 'main')
+    if current_menu != 'main' and text in main_menu_buttons:
+        # Switch back to main and let it handle
+        context.user_data['menu_level'] = 'main'
+        # Re-run the menu check after this function? We'll just let the normal flow handle.
+        # But we need to ensure we don't go into submenu handlers. So we'll set it and then
+        # go to the menu navigation below.
+        pass
+    # ---------------------------------------------------------------------------------
 
     if is_admin(user.id) and context.user_data.get('admin_action'):
         handle_admin_action(update, context, text)
@@ -656,6 +676,7 @@ def handle_protection_menu(update, context, text):
             msg += f"📱 <code>{number}</code>\n🕒 {protected_at}\n\n"
         update.message.reply_text(msg, parse_mode=ParseMode.HTML, reply_markup=get_protection_keyboard())
     else:
+        # If text is not a protection menu button, show hint but stay in menu
         update.message.reply_text("Please use the buttons below.", reply_markup=get_protection_keyboard())
 
 def handle_admin_menu(update, context, text):
@@ -760,6 +781,8 @@ def handle_admin_menu(update, context, text):
         status_text = "ON" if new_status else "OFF"
         update.message.reply_text(f"🔄 Public Protection is now <b>{status_text}</b>. Users can {'now' if new_status else 'no longer'} protect numbers.", parse_mode=ParseMode.HTML, reply_markup=get_admin_keyboard())
         log_user_action(user.id, "Toggled Public Protection", status_text)
+    else:
+        update.message.reply_text("Please use the admin panel buttons.", reply_markup=get_admin_keyboard())
 
 def handle_number_protection_menu(update, context, text):
     user = update.effective_user
@@ -801,6 +824,8 @@ def handle_number_protection_menu(update, context, text):
         if len(protected) > 20:
             msg += f"\n... and {len(protected)-20} more."
         update.message.reply_text(msg, parse_mode=ParseMode.HTML, reply_markup=get_number_protection_keyboard())
+    else:
+        update.message.reply_text("Please use the number protection menu buttons.", reply_markup=get_number_protection_keyboard())
 
 def handle_admin_management_menu(update, context, text):
     user = update.effective_user
@@ -825,6 +850,8 @@ def handle_admin_management_menu(update, context, text):
         sub_admins = [doc["_id"] for doc in admins.find()]
         msg += "\n".join(f"<code>{uid}</code>" for uid in sub_admins) if sub_admins else "None"
         update.message.reply_text(msg, parse_mode=ParseMode.HTML, reply_markup=get_admin_management_keyboard())
+    else:
+        update.message.reply_text("Please use the admin management buttons.", reply_markup=get_admin_management_keyboard())
 
 def handle_buy_menu(update, context, text):
     user = update.effective_user
@@ -835,6 +862,8 @@ def handle_buy_menu(update, context, text):
         update.message.reply_text("⭐ Premium Plans:\n1 Week - ₹60\n15 Day's - ₹99\n1 Month - ₹149\nLifetime - ₹999\n\nContact @ll_VIPIN_ll or @Stampedk", parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Contact Support", url=f"https://t.me/{SUPPORT_USERNAME}")]]))
     elif text == "Credit Packages 💰":
         update.message.reply_text("💰 Credit Packages:\n10 Credits - ₹15\n27 Credits - ₹35\n55 Credits - ₹65\n115 Credits - ₹110\n250 Credits - ₹200\n\nContact @ll_VIPIN_ll or @Stampedk", parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Contact Support", url=f"https://t.me/{SUPPORT_USERNAME}")]]))
+    else:
+        update.message.reply_text("Please use the buy menu buttons.", reply_markup=get_buy_keyboard())
 
 # ---------- Admin Action Handler ----------
 def handle_admin_action(update, context, text):
