@@ -72,7 +72,8 @@ def create_user(user_id, referred_by=None):
         "last_redeem_timestamp": 0,
         "premium_until": None,
         "reminders_sent": [],
-        "created_at": datetime.now()   # <-- Added: user creation timestamp
+        "created_at": datetime.now(),
+        "admin_credit_protected": False   # NEW: flag for admin-gifted credits
     }
     users.insert_one(user)
     if referred_by:
@@ -87,6 +88,15 @@ def create_user(user_id, referred_by=None):
 
 def update_credits(user_id, delta):
     users.update_one({"_id": user_id}, {"$inc": {"credits": delta}})
+
+# ---------- NEW: Admin credit protection ----------
+def set_admin_credit_protected(user_id, protected=True):
+    users.update_one({"_id": user_id}, {"$set": {"admin_credit_protected": protected}})
+
+def is_admin_credit_protected(user_id):
+    user = get_user(user_id)
+    return user.get("admin_credit_protected", False) if user else False
+# ------------------------------------------------
 
 def set_premium_until(user_id, days=None):
     if days:
@@ -172,30 +182,20 @@ def is_maintenance_mode_active():
     return maintenance_mode.find_one().get("active", False)
 
 def get_daily_free_limit(user_id=None):
-    """
-    Returns daily free limit for a user.
-    If user is on their first day (created_at date == today), limit is 0.
-    Otherwise, returns the default limit from config (3).
-    """
     default_limit = 3
     doc = daily_limit.find_one()
     if doc:
         default_limit = doc.get("limit", 3)
-    
     if user_id is None:
         return default_limit
-    
     user = get_user(user_id)
     if not user:
         return default_limit
-    
     created_at = user.get("created_at")
     if created_at:
         today = datetime.now().date()
         if created_at.date() == today:
-            # First day: no daily free searches
             return 0
-    
     return default_limit
 
 def set_daily_free_limit(limit):
@@ -208,7 +208,7 @@ def get_auto_delete_time():
 def set_auto_delete_time(seconds):
     auto_delete_time.update_one({}, {"$set": {"seconds": seconds}})
 
-# ---------- Number protection (Phone) with User Info ----------
+# ---------- Number protection ----------
 def is_number_protected(number):
     return protected_numbers.find_one({"_id": number}) is not None
 
@@ -252,7 +252,7 @@ def get_all_protected_numbers_with_user_info():
 def get_user_protected_numbers(user_id):
     return list(protected_numbers.find({"user_id": user_id}))
 
-# ---------- Premium Reminder Functions ----------
+# ---------- Premium Reminder ----------
 def get_users_expiring_in_days(day_threshold):
     now = datetime.now()
     target_day_start = (now + timedelta(days=day_threshold)).replace(hour=0, minute=0, second=0, microsecond=0)
