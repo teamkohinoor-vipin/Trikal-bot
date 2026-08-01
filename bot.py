@@ -173,33 +173,55 @@ def log_search_to_channel(context, user, search_type, query, result="", success=
     except Exception as e:
         logger.error(f"❌ Log error for user {user.id}: {e}")
 
-# ---------- Broadcast Background Task ----------
+# ---------- Broadcast Background Task (FAST) ----------
 def broadcast_task(context):
-    """Background task to send broadcast to all non-banned users."""
+    """Background task to send broadcast quickly with flood-wait handling."""
     job = context.job
     message = job.context['message']
     admin_chat_id = job.context['admin_chat_id']
     
     success = 0
     fail = 0
+    total = 0
     banned_users_set = set()
     for doc in banned_users.find():
         banned_users_set.add(doc["_id"])
     
     for user in users.find():
+        total += 1
         uid = user["_id"]
         if uid in banned_users_set:
             continue
         try:
             context.bot.send_message(chat_id=uid, text=message, parse_mode=ParseMode.HTML)
             success += 1
-            time.sleep(0.05)  # Rate limit protection
         except Exception as e:
             fail += 1
-            logger.error(f"Broadcast failed for {uid}: {e}")
+            # If it's a flood error, wait and retry? (We'll just log and continue)
+            if hasattr(e, 'retry_after'):
+                # telegram.error.RetryAfter has retry_after attribute
+                wait = e.retry_after
+                logger.warning(f"Rate limited for {uid}, waiting {wait}s")
+                time.sleep(wait)
+                try:
+                    context.bot.send_message(chat_id=uid, text=message, parse_mode=ParseMode.HTML)
+                    success += 1
+                    fail -= 1  # undo fail count
+                except:
+                    pass
+            else:
+                logger.warning(f"Broadcast failed for {uid}: {e}")
     
-    report = f"📢 Broadcast completed:\n✅ Success: {success}\n❌ Failed: {fail}"
-    context.bot.send_message(chat_id=admin_chat_id, text=report, parse_mode=ParseMode.HTML)
+    report = (
+        f"📢 <b>Broadcast completed!</b>\n"
+        f"👥 Total users: {total}\n"
+        f"✅ Success: {success}\n"
+        f"❌ Failed: {fail}"
+    )
+    try:
+        context.bot.send_message(chat_id=admin_chat_id, text=report, parse_mode=ParseMode.HTML)
+    except Exception as e:
+        logger.error(f"Could not send broadcast report to admin: {e}")
 
 def delete_message(context):
     job = context.job
@@ -208,6 +230,12 @@ def delete_message(context):
         logger.info(f"✅ Message {job.context['message_id']} deleted successfully")
     except Exception as e:
         logger.warning(f"⚠️ Delete message error (already deleted or not found): {e}")
+
+# ---------- Ensure User Exists (decorator-like helper) ----------
+def ensure_user(user_id):
+    """Create user if not exists."""
+    if not get_user(user_id):
+        create_user(user_id)
 
 # ---------- Keyboards ----------
 def get_main_keyboard(user_id):
@@ -269,24 +297,7 @@ def get_buy_keyboard():
 def start(update: Update, context: CallbackContext):
     user = update.effective_user
     chat = update.effective_chat
-    
-    # ========== STEP 1: ALWAYS CREATE/SYNC USER IN DATABASE ==========
-    if not get_user(user.id):
-        # Check for referral before creating
-        referrer_id = None
-        if context.args and context.args[0].isdigit():
-            rid = int(context.args[0])
-            if rid != user.id and get_user(rid):
-                referrer_id = rid
-        create_user(user.id, referrer_id)
-        if referrer_id:
-            referrer = get_user(referrer_id)
-            if referrer:
-                context.bot.send_message(chat_id=referrer_id,
-                    text=f"🎉 New referral! {user.first_name} joined.\nYou received {REFERRAL_CREDITS} credits.\nTotal referrals: {referrer['referral_count']}")
-        # Notify admins only if they are new and will verify (we'll send in verify callback)
-        # But we can also send here if we want – but we'll keep it in verify to avoid duplicate.
-    # =============================================================
+    ensure_user(user.id)  # Save if not exists
     
     if is_maintenance_mode_active() and not is_admin(user.id):
         update.message.reply_text("⚠️ Maintenance mode active. Try later.")
@@ -311,10 +322,7 @@ def start(update: Update, context: CallbackContext):
 def help_command(update: Update, context: CallbackContext):
     user = update.effective_user
     chat = update.effective_chat
-    
-    # Ensure user exists in DB
-    if not get_user(user.id):
-        create_user(user.id)
+    ensure_user(user.id)
     
     if chat.type != 'private' and chat.id != OFFICIAL_GROUP_ID:
         update.message.reply_text("❌ Not allowed here.")
@@ -332,10 +340,7 @@ def help_command(update: Update, context: CallbackContext):
 def phone_command(update: Update, context: CallbackContext):
     user = update.effective_user
     chat = update.effective_chat
-    
-    # Ensure user exists
-    if not get_user(user.id):
-        create_user(user.id)
+    ensure_user(user.id)
     
     if is_maintenance_mode_active() and not is_admin(user.id):
         update.message.reply_text("⚠️ Maintenance mode.")
@@ -451,8 +456,7 @@ def perform_phone_lookup(update, context, phone, raw):
 
 def redeem_command(update: Update, context: CallbackContext):
     user = update.effective_user
-    if not get_user(user.id):
-        create_user(user.id)
+    ensure_user(user.id)
     if is_banned(user.id):
         return
     if not context.args:
@@ -499,10 +503,7 @@ def handle_message(update: Update, context: CallbackContext):
     user = update.effective_user
     text = update.message.text.strip()
     chat = update.effective_chat
-    
-    # Ensure user exists
-    if not get_user(user.id):
-        create_user(user.id)
+    ensure_user(user.id)
     
     if is_maintenance_mode_active() and not is_admin(user.id):
         update.message.reply_text("⚠️ Maintenance mode.")
@@ -918,7 +919,6 @@ def handle_admin_action(update, context, text):
             update.message.reply_text("❌ Invalid number.", reply_markup=get_admin_keyboard())
         context.user_data['admin_action'] = None
     elif action == 'broadcast':
-        # Use background task
         if context.job_queue:
             context.job_queue.run_once(
                 broadcast_task,
