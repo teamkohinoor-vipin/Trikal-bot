@@ -17,7 +17,7 @@ OFFICIAL_GROUP_ID = int(os.getenv("OFFICIAL_GROUP_ID", "-1003490016636"))
 OFFICIAL_GROUP_LINK = os.getenv("OFFICIAL_GROUP_LINK", "https://t.me/+OdNjwHMDXZtiNzA1")
 
 # ---------- Mandatory Channels ----------
-CHANNEL_1_INVITE_LINK = os.getenv("CHANNEL_1_INVITE_LINK", "https://t.me/BotZoneInfo")
+CHANNEL_1_INVITE_LINK = os.getenv("CHANNEL_1_INVITE_LINK", "https://t.me/SecretBotsTelegram")
 REQUIRED_CHANNEL_1_ID = int(os.getenv("REQUIRED_CHANNEL_1_ID", "-1003411597042"))
 CHANNEL_2_INVITE_LINK = os.getenv("CHANNEL_2_INVITE_LINK", "https://t.me/+EnHwtMwircJkNzk1")
 REQUIRED_CHANNEL_2_ID = int(os.getenv("REQUIRED_CHANNEL_2_ID", "-1003227457437"))
