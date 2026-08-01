@@ -638,7 +638,7 @@ def handle_main_menu(update, context, text):
     elif text == "Support 👨‍💻":
         update.message.reply_text(f"👨‍💻 Contact @{SUPPORT_USERNAME}", parse_mode=ParseMode.HTML, reply_markup=get_main_keyboard(user.id))
     elif text == "Official Group 🚀":
-        update.message.reply_text(f"🚀 Official Group: {OFFICIAL_GROUP_LINK}\n\nJoin for unlimited free searches!", parse_mode=ParseMode.HTML, reply_markup=get_main_keyboard(user.id))
+        update.message.reply_text(f"🚀 Official Group: {OFFICIAL_GROUP_LINK}\n\nJoin for solve your any doubts or any questions!", parse_mode=ParseMode.HTML, reply_markup=get_main_keyboard(user.id))
     elif text == "Privacy Policy 🔒":
         update.message.reply_text("🔒 We do not store any personal data. Only credits and referral counts are kept.", parse_mode=ParseMode.HTML, reply_markup=get_main_keyboard(user.id))
     elif text == "Protection 🛡️":
