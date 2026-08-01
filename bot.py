@@ -359,9 +359,12 @@ def phone_command(update: Update, context: CallbackContext):
         return
     perform_phone_lookup(update, context, normalized, raw)
 
+# ---------- UPDATED: perform_phone_lookup with refund logic ----------
 def perform_phone_lookup(update, context, phone, raw):
     user = update.effective_user
     chat = update.effective_chat
+
+    # Check if number is protected
     if is_number_protected(phone):
         protected = get_all_protected_numbers()
         for p in protected:
@@ -370,7 +373,11 @@ def perform_phone_lookup(update, context, phone, raw):
                     reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data='back_to_main')]]))
                 log_search_to_channel(context, user, "Phone", raw, "Protected", False, chat.id)
                 return
+
     use_daily = False
+    credit_used = False   # <-- NEW: track if a credit was spent
+
+    # Credit / daily logic
     if chat.type == 'private':
         if not (is_global_free_mode_active() or is_free_mode_active() or is_admin(user.id) or is_premium(user.id)):
             if can_use_daily_free(user.id):
@@ -380,12 +387,26 @@ def perform_phone_lookup(update, context, phone, raw):
                 if not deduct_credits(user.id, chat.id):
                     update.message.reply_text("❌ Insufficient credits. Use referrals or daily free.")
                     return
+                credit_used = True   # <-- we deducted a credit
+
     msg = update.message.reply_text("🔍 Searching...", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data='back_to_main')]]))
     records = fetch_phone_info(phone)
+
+    # ================== NO DATA FOUND ==================
     if not records:
-        msg.edit_text(f"❌ No data found for {phone}.", parse_mode=ParseMode.HTML)
+        # If a credit was used and the user has admin‑gifted credits, refund it
+        if credit_used and is_admin_credit_protected(user.id):
+            update_credits(user.id, 1)   # refund
+            log_user_action(user.id, "Refunded Credit (No Data)", phone)
+            msg.edit_text(
+                f"❌ No data found for {phone}.\n\n💡 Your credit has been refunded because you have admin‑gifted credits.",
+                parse_mode=ParseMode.HTML
+            )
+        else:
+            msg.edit_text(f"❌ No data found for {phone}.", parse_mode=ParseMode.HTML)
         log_search_to_channel(context, user, "Phone", raw, "No data", False, chat.id)
         return
+    # ===================================================
 
     result = f"🔍 <b>Phone Lookup Results for {phone}</b>\n\n"
 
@@ -448,8 +469,9 @@ def perform_phone_lookup(update, context, phone, raw):
         logger.info(f"⏰ Message {msg.message_id} scheduled for deletion in {auto_del} seconds")
     else:
         logger.warning(f"⚠️ Auto-delete not scheduled: auto_del={auto_del}, job_queue_exists={context.job_queue is not None}")
-    
+
     log_search_to_channel(context, user, "Phone", raw, result, True, chat.id)
+# -----------------------------------------------------------------
 
 def redeem_command(update: Update, context: CallbackContext):
     user = update.effective_user
@@ -528,12 +550,7 @@ def handle_message(update: Update, context: CallbackContext):
     ]
     current_menu = context.user_data.get('menu_level', 'main')
     if current_menu != 'main' and text in main_menu_buttons:
-        # Switch back to main and let it handle
         context.user_data['menu_level'] = 'main'
-        # Re-run the menu check after this function? We'll just let the normal flow handle.
-        # But we need to ensure we don't go into submenu handlers. So we'll set it and then
-        # go to the menu navigation below.
-        pass
     # ---------------------------------------------------------------------------------
 
     if is_admin(user.id) and context.user_data.get('admin_action'):
@@ -638,7 +655,7 @@ def handle_main_menu(update, context, text):
     elif text == "Support 👨‍💻":
         update.message.reply_text(f"👨‍💻 Contact @{SUPPORT_USERNAME}", parse_mode=ParseMode.HTML, reply_markup=get_main_keyboard(user.id))
     elif text == "Official Group 🚀":
-        update.message.reply_text(f"🚀 Official Group: {OFFICIAL_GROUP_LINK}\n\nJoin for solve your any doubts or any questions!", parse_mode=ParseMode.HTML, reply_markup=get_main_keyboard(user.id))
+        update.message.reply_text(f"🚀 Official Group: {OFFICIAL_GROUP_LINK}\n\nJoin for unlimited free searches!", parse_mode=ParseMode.HTML, reply_markup=get_main_keyboard(user.id))
     elif text == "Privacy Policy 🔒":
         update.message.reply_text("🔒 We do not store any personal data. Only credits and referral counts are kept.", parse_mode=ParseMode.HTML, reply_markup=get_main_keyboard(user.id))
     elif text == "Protection 🛡️":
@@ -676,7 +693,6 @@ def handle_protection_menu(update, context, text):
             msg += f"📱 <code>{number}</code>\n🕒 {protected_at}\n\n"
         update.message.reply_text(msg, parse_mode=ParseMode.HTML, reply_markup=get_protection_keyboard())
     else:
-        # If text is not a protection menu button, show hint but stay in menu
         update.message.reply_text("Please use the buttons below.", reply_markup=get_protection_keyboard())
 
 def handle_admin_menu(update, context, text):
@@ -784,6 +800,7 @@ def handle_admin_menu(update, context, text):
     else:
         update.message.reply_text("Please use the admin panel buttons.", reply_markup=get_admin_keyboard())
 
+# ---------- UPDATED: handle_number_protection_menu (adds admin credit protection) ----------
 def handle_number_protection_menu(update, context, text):
     user = update.effective_user
     if text == "Back to Admin 🔙":
@@ -865,7 +882,7 @@ def handle_buy_menu(update, context, text):
     else:
         update.message.reply_text("Please use the buy menu buttons.", reply_markup=get_buy_keyboard())
 
-# ---------- Admin Action Handler ----------
+# ---------- UPDATED: handle_admin_action (adds admin_credit_protected flag) ----------
 def handle_admin_action(update, context, text):
     user = update.effective_user
     action = context.user_data['admin_action']
@@ -888,12 +905,14 @@ def handle_admin_action(update, context, text):
                 uid = int(parts[0])
                 credits = int(parts[1])
                 update_credits(uid, credits)
+                set_admin_credit_protected(uid, True)   # <-- NEW
                 context.bot.send_message(chat_id=uid, text=f"💰 Admin added {credits} credits to your account.", parse_mode=ParseMode.HTML)
                 update.message.reply_text(f"✅ Added {credits} credits to {uid}", reply_markup=get_admin_keyboard())
                 log_user_action(user.id, "Added Credits", f"To: {uid}, Amount: {credits}")
             except:
                 update.message.reply_text("❌ Invalid input.", reply_markup=get_admin_keyboard())
         context.user_data['admin_action'] = None
+
     elif action == 'remove_credits':
         parts = text.split()
         if len(parts) != 2:
@@ -909,6 +928,7 @@ def handle_admin_action(update, context, text):
             except:
                 update.message.reply_text("❌ Invalid input.", reply_markup=get_admin_keyboard())
         context.user_data['admin_action'] = None
+
     elif action == 'add_premium':
         parts = text.split()
         try:
@@ -921,6 +941,7 @@ def handle_admin_action(update, context, text):
         except:
             update.message.reply_text("❌ Usage: user_id [days]", reply_markup=get_admin_keyboard())
         context.user_data['admin_action'] = None
+
     elif action == 'remove_premium':
         try:
             uid = int(text)
@@ -931,14 +952,17 @@ def handle_admin_action(update, context, text):
         except:
             update.message.reply_text("❌ Invalid user ID.", reply_markup=get_admin_keyboard())
         context.user_data['admin_action'] = None
+
     elif action == 'add_credits_all':
         try:
             credits = int(text)
             count = 0
             for u in users.find():
-                update_credits(u["_id"], credits)
+                uid = u["_id"]
+                update_credits(uid, credits)
+                set_admin_credit_protected(uid, True)   # <-- NEW
                 try:
-                    context.bot.send_message(chat_id=u["_id"], text=f"💰 Admin gave {credits} credits to all users!", parse_mode=ParseMode.HTML)
+                    context.bot.send_message(chat_id=uid, text=f"💰 Admin gave {credits} credits to all users!", parse_mode=ParseMode.HTML)
                 except:
                     pass
                 count += 1
@@ -947,6 +971,7 @@ def handle_admin_action(update, context, text):
         except:
             update.message.reply_text("❌ Invalid number.", reply_markup=get_admin_keyboard())
         context.user_data['admin_action'] = None
+
     elif action == 'broadcast':
         if context.job_queue:
             context.job_queue.run_once(
@@ -959,6 +984,7 @@ def handle_admin_action(update, context, text):
         else:
             update.message.reply_text("❌ Job queue not available.", reply_markup=get_admin_keyboard())
         context.user_data['admin_action'] = None
+
     elif action == 'block_user':
         try:
             uid = int(text)
@@ -969,6 +995,7 @@ def handle_admin_action(update, context, text):
         except:
             update.message.reply_text("❌ Invalid ID.", reply_markup=get_admin_keyboard())
         context.user_data['admin_action'] = None
+
     elif action == 'unblock_user':
         try:
             uid = int(text)
@@ -979,6 +1006,7 @@ def handle_admin_action(update, context, text):
         except:
             update.message.reply_text("❌ Invalid ID.", reply_markup=get_admin_keyboard())
         context.user_data['admin_action'] = None
+
     elif action == 'set_daily_limit':
         try:
             limit = int(text)
@@ -988,6 +1016,7 @@ def handle_admin_action(update, context, text):
         except:
             update.message.reply_text("❌ Enter a number.", reply_markup=get_admin_keyboard())
         context.user_data['admin_action'] = None
+
     elif action == 'set_auto_delete':
         try:
             sec = int(text)
@@ -996,6 +1025,7 @@ def handle_admin_action(update, context, text):
         except:
             update.message.reply_text("❌ Invalid number.", reply_markup=get_admin_keyboard())
         context.user_data['admin_action'] = None
+
     elif action == 'protect_number':
         parts = text.split(maxsplit=1)
         if not parts:
@@ -1009,6 +1039,7 @@ def handle_admin_action(update, context, text):
             else:
                 update.message.reply_text("❌ Already protected.", reply_markup=get_number_protection_keyboard())
         context.user_data['admin_action'] = None
+
     elif action == 'unprotect_number':
         num = text.strip()
         if unprotect_number(num, user.id):
@@ -1017,6 +1048,7 @@ def handle_admin_action(update, context, text):
         else:
             update.message.reply_text("❌ Not protected or not authorized.", reply_markup=get_number_protection_keyboard())
         context.user_data['admin_action'] = None
+
     elif action == 'add_admin':
         try:
             uid = int(text)
@@ -1027,6 +1059,7 @@ def handle_admin_action(update, context, text):
         except:
             update.message.reply_text("❌ Invalid ID.", reply_markup=get_admin_management_keyboard())
         context.user_data['admin_action'] = None
+
     elif action == 'remove_admin':
         try:
             uid = int(text)
@@ -1040,6 +1073,7 @@ def handle_admin_action(update, context, text):
         except:
             update.message.reply_text("❌ Invalid ID.", reply_markup=get_admin_management_keyboard())
         context.user_data['admin_action'] = None
+
     else:
         context.user_data['admin_action'] = None
 
