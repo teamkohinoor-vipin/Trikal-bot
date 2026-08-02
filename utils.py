@@ -44,66 +44,91 @@ def create_search_result_file(result_text, query, search_type, bot_username):
     f.name = create_safe_filename(query, search_type, bot_username)
     return f
 
-# ---------- UPDATED fetch_phone_info for new API ----------
+# ---------- UPDATED fetch_phone_info for new API format (supports source1/source2) ----------
 def fetch_phone_info(phone_number):
     """
     Fetch phone details from new API.
     Returns a list of subscriber dicts (empty if no data or error).
+    Timeout set to 5 seconds.
     """
     url = PHONE_API_NEW.format(num=phone_number)
     try:
-        resp = requests.get(url, timeout=10)
+        resp = requests.get(url, timeout=5)
         if resp.status_code != 200:
-            logger.warning(f"API returned {resp.status_code}")
+            logger.warning(f"API returned {resp.status_code} for {phone_number}")
             return []
 
         data = resp.json()
 
-        # ========== NEW API FORMAT (status: true, result: { results: [...] }) ==========
+        # ========== NEW API FORMAT (multiple sources) ==========
         if data.get('status') is True and 'result' in data:
-            result = data.get('result', {})
-            results = result.get('results', [])
-            if results and isinstance(results, list):
-                normalized = []
-                # Field mapping: API field -> our display field
-                field_map = {
-                    'name': 'name',
-                    'fname': 'father_name',
-                    'address': 'address',
-                    'mobile': 'mobile',
-                    'alt': 'alternate_number',
-                    'circle': 'circle',
-                    'id': 'id',
-                    'email': 'email'
-                }
-                for rec in results:
-                    new_rec = {}
-                    for api_key, our_key in field_map.items():
-                        if api_key in rec and rec[api_key]:
-                            # Handle None or empty strings
-                            value = rec[api_key]
-                            if value is not None and str(value).strip():
-                                new_rec[our_key] = str(value)
-                    if new_rec:
-                        normalized.append(new_rec)
-                return normalized
+            result_data = data['result']
+            all_records = []
+            # Check if 'data' contains source objects
+            if 'data' in result_data and isinstance(result_data['data'], dict):
+                sources = result_data['data']
+                for source_key, source_value in sources.items():
+                    if isinstance(source_value, dict) and 'records' in source_value:
+                        records = source_value['records']
+                        if not isinstance(records, list):
+                            continue
+                        for rec in records:
+                            normalized = {}
+                            # Map fields from different sources
+                            if 'FullName' in rec and rec['FullName']:
+                                normalized['name'] = str(rec['FullName'])
+                            if 'FatherName' in rec and rec['FatherName']:
+                                normalized['father_name'] = str(rec['FatherName'])
+                            # Address: prefer Adres, else Adres2
+                            if 'Adres' in rec and rec['Adres']:
+                                normalized['address'] = str(rec['Adres'])
+                            elif 'Adres2' in rec and rec['Adres2']:
+                                normalized['address'] = str(rec['Adres2'])
+                            # Phone numbers
+                            if 'Phone' in rec and rec['Phone']:
+                                normalized['mobile'] = str(rec['Phone'])
+                            elif 'Phone2' in rec and rec['Phone2']:
+                                normalized['mobile'] = str(rec['Phone2'])
+                            elif 'Phone3' in rec and rec['Phone3']:
+                                normalized['mobile'] = str(rec['Phone3'])
+                            # Alternate number (if different from mobile)
+                            if 'Phone2' in rec and rec['Phone2'] and rec['Phone2'] != normalized.get('mobile'):
+                                normalized['alternate_number'] = str(rec['Phone2'])
+                            elif 'Phone3' in rec and rec['Phone3'] and rec['Phone3'] != normalized.get('mobile'):
+                                normalized['alternate_number'] = str(rec['Phone3'])
+                            # Circle/Region
+                            if 'Region' in rec and rec['Region']:
+                                normalized['circle'] = str(rec['Region'])
+                            elif 'Stat' in rec and rec['Stat']:
+                                normalized['circle'] = str(rec['Stat'])
+                            # ID / Document Number
+                            if 'DocumentNumber' in rec and rec['DocumentNumber']:
+                                normalized['id'] = str(rec['DocumentNumber'])
+                            # Age or other fields can be added if needed
+                            if normalized:
+                                all_records.append(normalized)
+                if all_records:
+                    return all_records
 
-        # ========== OLD API FORMAT (for backward compatibility) ==========
+        # ========== OLD API FORMAT 1 (single subscriber) ==========
         if data.get('status') == 'success' and 'data' in data:
             subscriber = data['data'].get('subscriber')
             if subscriber and isinstance(subscriber, dict):
                 return [subscriber]
 
-        # Fallback: if direct list or 'records' key
+        # ========== OLD FORMAT 2 (direct list) ==========
         if isinstance(data, list):
             return data
+
+        # ========== OLD FORMAT 3 (records key) ==========
         if isinstance(data, dict) and 'records' in data:
             return data['records']
 
+        logger.warning(f"⚠️ No data found for {phone_number}")
         return []
 
     except requests.exceptions.Timeout:
-        logger.warning(f"⏱️ API timeout for {phone_number} (10s)")
+        logger.warning(f"⏱️ API timeout for {phone_number} (5s)")
         return []
     except requests.exceptions.ConnectionError:
         logger.warning(f"🔌 API connection error for {phone_number}")
