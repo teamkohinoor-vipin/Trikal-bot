@@ -305,6 +305,7 @@ def start(update: Update, context: CallbackContext):
         parse_mode=ParseMode.HTML
     )
     return
+    
     if is_banned(user.id):
         return
     if chat.type != 'private' and chat.id != OFFICIAL_GROUP_ID:
