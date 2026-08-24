@@ -297,12 +297,8 @@ def start(update: Update, context: CallbackContext):
     ensure_user(user.id)
     
     if is_maintenance_mode_active() and not is_admin(user.id):
-        update.message.reply_text("⚠️ 🤖 Bot is currently under maintenance. 🛠️
-
-⚠️ Please try again after some time.
-We will notify you when the bot runs properly.
-
-🙏 Thank you for your patience and understanding! 💙")
+        update.message.reply_text("⚠️ 🤖 Bot is currently under maintenance. 🛠️\n⚠️ Please try again after some time.
+We will notify you when the bot runs properly.\n🙏 Thank you for your patience and understanding! 💙")
         return
     if is_banned(user.id):
         return
